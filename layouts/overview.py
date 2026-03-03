@@ -5,7 +5,7 @@ KPI cards + CSI distribution + 7 drill-down charts.
 import plotly.graph_objects as go
 import plotly.express as px
 import dash_bootstrap_components as dbc
-from dash import html, dcc, Input, Output, State, callback, ctx, no_update
+from dash import html, dcc, Input, Output, State, callback, ctx, no_update, ALL
 import pandas as pd
 
 from config import CSI_COLORS, CSI_CATEGORIES
@@ -224,19 +224,19 @@ def register_callbacks(app):
         Input("store-selected-category", "data"),
         Input("global-date-range", "start_date"),
         Input("global-date-range", "end_date"),
-        Input("occurrence-chart",      "clickData"),
-        Input("services-chart",        "clickData"),
-        Input("city-chart",            "clickData"),
-        Input("bng-chart",             "clickData"),
+        Input({"type": "drill-chart", "index": ALL}, "clickData"),
         State("store-city-drill",      "data"),
         State("store-bng-drill",       "data"),
         State("store-service-drill",   "data"),
         prevent_initial_call=False,
     )
-    def update_drilldown(tab, category, d1, d2,
-                         occ_click, svc_click, city_click, bng_click,
+    def update_drilldown(tab, category, d1, d2, chart_clicks,
                          city_drill, bng_drill, svc_drill):
         triggered = ctx.triggered_id or ""
+
+        triggered_idx = None
+        if isinstance(triggered, dict) and triggered.get("type") == "drill-chart":
+            triggered_idx = triggered.get("index")
 
         # Reset drill states on tab / category / date changes
         if triggered in ("drilldown-tabs", "store-selected-category",
@@ -246,22 +246,26 @@ def register_callbacks(app):
             svc_drill  = []
 
         # ── Handle drill clicks ───────────────────────────────────────────────
-        if triggered == "city-chart" and city_click:
-            label = city_click["points"][0]["label"]
+        click_data = None
+        if chart_clicks and any(chart_clicks):
+            click_data = next((c for c in chart_clicks if c is not None), None)
+
+        if triggered_idx == "city" and click_data:
+            label = click_data["points"][0]["label"]
             if len(city_drill) == 0:
                 city_drill = [label]
             elif len(city_drill) == 1:
                 city_drill = [city_drill[0], label]
 
-        if triggered == "bng-chart" and bng_click:
-            label = bng_click["points"][0]["label"]
+        if triggered_idx == "bng" and click_data:
+            label = click_data["points"][0]["label"]
             if len(bng_drill) == 0:
                 bng_drill = [label]
             elif len(bng_drill) == 1:
                 bng_drill = [bng_drill[0], label]
 
-        if triggered == "services-chart" and svc_click:
-            label = svc_click["points"][0]["label"]
+        if triggered_idx == "services" and click_data:
+            label = click_data["points"][0]["label"]
             if len(svc_drill) == 0:
                 svc_drill = [label]   # service selected
             elif len(svc_drill) == 1:
@@ -326,7 +330,7 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
             **CHART_LAYOUT,
         )
         return dbc.Card(dbc.CardBody([
-            dcc.Graph(id="occurrence-chart", figure=fig,
+            dcc.Graph(id={"type": "drill-chart", "index": "occurrence"}, figure=fig,
                       config={"displayModeBar": False}, style={"height": "400px"}),
         ]))
 
@@ -351,7 +355,7 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
 
         # Patch the graph id
         if hasattr(chart, "id"):
-            chart.id = chart_id
+            chart.id = {"type": "drill-chart", "index": "services"}
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: City ─────────────────────────────────────────────────────────────
@@ -364,7 +368,7 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                  else f"{category} in {city}" if city
                  else f"{category} by City")
         chart = _donut(df, "label", "selected_cnt", title)
-        chart.id = "city-chart"
+        chart.id = {"type": "drill-chart", "index": "city"}
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: BNG / OSP ────────────────────────────────────────────────────────
@@ -372,7 +376,7 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
         breadcrumb = drill_breadcrumb(["All BNGs"] + bng_drill)
         df = ds.get_bng_breakdown(category, d1, d2)
         chart = _donut(df, "bng", "selected_cnt", f"{category} by BNG")
-        chart.id = "bng-chart"
+        chart.id = {"type": "drill-chart", "index": "bng"}
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: Packages ─────────────────────────────────────────────────────────
