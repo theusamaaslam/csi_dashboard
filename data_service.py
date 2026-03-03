@@ -173,12 +173,12 @@ def get_service_breakdown(category: str = "Very Poor",
         """
         from sqlalchemy import text
         from db import ai_engine
+
+        in_clause = ", ".join(f"'{x}'" for x in ids)
         with ai_engine.connect() as conn:
-            from sqlalchemy.dialects.postgresql import ARRAY
             result = conn.execute(
-                text("SELECT UPPER(services) AS service, COUNT(DISTINCT userid) AS cnt "
-                     "FROM ai.activity WHERE userid = ANY(:ids) GROUP BY 1 ORDER BY cnt DESC"),
-                {"ids": list(ids)}
+                text(f"SELECT UPPER(services) AS service, COUNT(DISTINCT userid) AS cnt "
+                     f"FROM ai.activity WHERE userid IN ({in_clause}) GROUP BY 1 ORDER BY cnt DESC")
             )
             rows = result.fetchall()
             cols = list(result.keys())
@@ -223,13 +223,15 @@ def get_fault_types(category: str = "Very Poor",
     ids = [str(x) for x in ids_df["userid"].tolist()]
     from db import ai_engine
     from sqlalchemy import text
+    if not ids:
+        return pd.DataFrame(columns=["fault_type", "cnt"])
+    in_clause = ", ".join(f"'{x}'" for x in ids)
     with ai_engine.connect() as conn:
         result = conn.execute(
-            text("SELECT master_fault_type AS fault_type, COUNT(*) AS cnt "
-                 "FROM ai.cti WHERE userid = ANY(:ids) "
-                 "AND master_fault_type IS NOT NULL AND master_fault_type != 'nan' "
-                 "GROUP BY 1 ORDER BY cnt DESC LIMIT 20"),
-            {"ids": ids}
+            text(f"SELECT master_fault_type AS fault_type, COUNT(*) AS cnt "
+                 f"FROM ai.cti WHERE userid IN ({in_clause}) "
+                 f"AND master_fault_type IS NOT NULL AND master_fault_type != 'nan' "
+                 f"GROUP BY 1 ORDER BY cnt DESC LIMIT 20")
         )
         rows = result.fetchall()
         cols = list(result.keys())
@@ -258,13 +260,16 @@ def get_sub_fault_types(category: str = "Very Poor",
     ids = [str(x) for x in ids_df["userid"].tolist()]
     from db import ai_engine
     from sqlalchemy import text
+    if not ids:
+        return pd.DataFrame(columns=["sub_fault_type", "cnt"])
+    in_clause = ", ".join(f"'{x}'" for x in ids)
     with ai_engine.connect() as conn:
         result = conn.execute(
-            text("SELECT sub_fault_type, COUNT(*) AS cnt FROM ai.cti "
-                 "WHERE userid = ANY(:ids) AND master_fault_type = :mft "
-                 "AND sub_fault_type IS NOT NULL AND sub_fault_type != 'nan' "
-                 "GROUP BY 1 ORDER BY cnt DESC LIMIT 20"),
-            {"ids": ids, "mft": master_fault}
+            text(f"SELECT sub_fault_type, COUNT(*) AS cnt FROM ai.cti "
+                 f"WHERE userid IN ({in_clause}) AND master_fault_type = :mft "
+                 f"AND sub_fault_type IS NOT NULL AND sub_fault_type != 'nan' "
+                 f"GROUP BY 1 ORDER BY cnt DESC LIMIT 20"),
+            {"mft": master_fault}
         )
         rows = result.fetchall()
         cols = list(result.keys())
@@ -300,13 +305,15 @@ def get_city_breakdown(category: str = "Very Poor",
     try:
         if city is None:
             # City level
+            if not selected_ids:
+                return pd.DataFrame(columns=["label", "selected_cnt", "total_cnt", "pct"])
+            in_clause = ", ".join(f"'{x}'" for x in selected_ids)
             with dwh_engine.connect() as conn:
                 # Selected category count per city
                 r_sel = conn.execute(
-                    text("SELECT city, COUNT(*) AS selected_cnt "
-                         "FROM dwh.customers WHERE customer_id = ANY(:ids) "
-                         "AND city IS NOT NULL GROUP BY city ORDER BY selected_cnt DESC"),
-                    {"ids": selected_ids}
+                    text(f"SELECT city, COUNT(*) AS selected_cnt "
+                         f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
+                         f"AND city IS NOT NULL GROUP BY city ORDER BY selected_cnt DESC")
                 )
                 sel_df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
                 # Total per city
@@ -321,13 +328,16 @@ def get_city_breakdown(category: str = "Very Poor",
 
         elif area is None:
             # Area level within city
+            if not selected_ids:
+                return pd.DataFrame(columns=["label", "selected_cnt", "total_cnt", "pct"])
+            in_clause = ", ".join(f"'{x}'" for x in selected_ids)
             with dwh_engine.connect() as conn:
                 r_sel = conn.execute(
-                    text("SELECT subdept AS area, COUNT(*) AS selected_cnt "
-                         "FROM dwh.customers WHERE customer_id = ANY(:ids) "
-                         "AND city = :city AND subdept IS NOT NULL "
-                         "GROUP BY subdept ORDER BY selected_cnt DESC"),
-                    {"ids": selected_ids, "city": city}
+                    text(f"SELECT subdept AS area, COUNT(*) AS selected_cnt "
+                         f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
+                         f"AND city = :city AND subdept IS NOT NULL "
+                         f"GROUP BY subdept ORDER BY selected_cnt DESC"),
+                    {"city": city}
                 )
                 sel_df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
                 r_tot = conn.execute(
@@ -343,13 +353,15 @@ def get_city_breakdown(category: str = "Very Poor",
 
         else:
             # Sub-area level (using location from cti as proxy)
+            if not selected_ids:
+                return pd.DataFrame(columns=["label", "selected_cnt", "total_cnt", "pct"])
+            in_clause = ", ".join(f"'{x}'" for x in selected_ids)
             with ai_engine.connect() as conn:
                 r_sel = conn.execute(
-                    text("SELECT location AS sublabel, COUNT(DISTINCT userid) AS selected_cnt "
-                         "FROM ai.cti WHERE userid = ANY(:ids) "
-                         "AND location IS NOT NULL AND location != 'nan' "
-                         "GROUP BY location ORDER BY selected_cnt DESC LIMIT 20"),
-                    {"ids": selected_ids}
+                    text(f"SELECT location AS sublabel, COUNT(DISTINCT userid) AS selected_cnt "
+                         f"FROM ai.cti WHERE userid IN ({in_clause}) "
+                         f"AND location IS NOT NULL AND location != 'nan' "
+                         f"GROUP BY location ORDER BY selected_cnt DESC LIMIT 20")
                 )
                 df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
             df["total_cnt"] = df["selected_cnt"]
@@ -430,12 +442,14 @@ def get_package_breakdown(category: str = "Very Poor",
     try:
         from db import dwh_engine
         from sqlalchemy import text
+        if not ids:
+            return pd.DataFrame(columns=["package", "cnt"])
+        in_clause = ", ".join(f"'{x}'" for x in ids)
         with dwh_engine.connect() as conn:
             result = conn.execute(
-                text("SELECT plan_name AS package, COUNT(*) AS cnt "
-                     "FROM dwh.customers WHERE customer_id = ANY(:ids) "
-                     "AND plan_name IS NOT NULL GROUP BY plan_name ORDER BY cnt DESC LIMIT 25"),
-                {"ids": ids}
+                text(f"SELECT plan_name AS package, COUNT(*) AS cnt "
+                     f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
+                     f"AND plan_name IS NOT NULL GROUP BY plan_name ORDER BY cnt DESC LIMIT 25")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
     except Exception as e:
@@ -465,12 +479,14 @@ def get_hardware_breakdown(category: str = "Very Poor",
     try:
         from db import ai_engine
         from sqlalchemy import text
+        if not ids:
+            return pd.DataFrame(columns=["hardware", "cnt"])
+        in_clause = ", ".join(f"'{x}'" for x in ids)
         with ai_engine.connect() as conn:
             result = conn.execute(
-                text("SELECT ontid AS hardware, COUNT(*) AS cnt "
-                     "FROM ai.alarms WHERE userid = ANY(:ids) "
-                     "AND ontid IS NOT NULL GROUP BY ontid ORDER BY cnt DESC LIMIT 20"),
-                {"ids": ids}
+                text(f"SELECT ontid AS hardware, COUNT(*) AS cnt "
+                     f"FROM ai.alarms WHERE userid IN ({in_clause}) "
+                     f"AND ontid IS NOT NULL GROUP BY ontid ORDER BY cnt DESC LIMIT 20")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
     except Exception as e:
@@ -499,13 +515,15 @@ def get_install_year_breakdown(category: str = "Very Poor",
     try:
         from db import dwh_engine
         from sqlalchemy import text
+        if not ids:
+            return pd.DataFrame(columns=["install_year", "cnt"])
+        in_clause = ", ".join(f"'{x}'" for x in ids)
         with dwh_engine.connect() as conn:
             result = conn.execute(
-                text("SELECT EXTRACT(YEAR FROM start_time)::int AS install_year, COUNT(*) AS cnt "
-                     "FROM dwh.lifecycle WHERE customer_id = ANY(:ids) "
-                     "AND activation_type = 'ACTIVATION' "
-                     "GROUP BY 1 ORDER BY 1"),
-                {"ids": ids}
+                text(f"SELECT EXTRACT(YEAR FROM start_time)::int AS install_year, COUNT(*) AS cnt "
+                     f"FROM dwh.lifecycle WHERE customer_id IN ({in_clause}) "
+                     f"AND activation_type = 'ACTIVATION' "
+                     f"GROUP BY 1 ORDER BY 1")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
     except Exception as e:

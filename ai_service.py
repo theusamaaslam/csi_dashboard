@@ -85,11 +85,13 @@ def analyze_segment(
 
 ---
 
-Please provide:
-1. **Root Cause Analysis** – What typically drives customers to the '{category}' category?
-2. **Key Risk Indicators** – What patterns should TAC Level-1 agents watch for?
-3. **Immediate Actions** – 3–5 concrete steps to improve this segment's experience.
-4. **Trends** – Any notable observations from the data above.
+Based on the Nayatel Telecom CSI data above, please provide a highly detailed, analytical response for the Management/NOC team:
+1. **Root Cause Analysis** – What technical or operational factors typically drive customers into the '{category}' segment? Refer to specific data points if available.
+2. **Key Risk Indicators** – What specific patterns (in calls, tickets, services, or locations) should TAC Level-1 and Level-2 agents watch for to intercept these customers before churn?
+3. **Immediate Actions** – Provide 3–5 concrete, actionable steps to improve this specific segment's experience immediately.
+4. **Strategic Trends** – Any notable observations from the distribution above, and how it impacts overall network health.
+
+*Keep the response highly professional, data-centric, and formatted nicely with markdown headers and bullet points.*
 """
     return _call_groq(prompt)
 
@@ -125,10 +127,10 @@ def analyze_customer(journey: dict) -> str:
                                 ["activity_name", "services", "status", "occurrence_time"])
 
     prompt = f"""
-## Customer Journey Analysis for TAC Level-1
+## Customer Journey Analysis for TAC Level-1 & Level-2
 
 **Customer ID:** {uid}
-**CSI Score:** {score}  |  **Category:** {category}
+**Predicted CSI Score:** {score}  |  **Current Category:** {category}
 
 ### Recent Trouble Tickets (last 20):
 {tickets_str}
@@ -136,20 +138,20 @@ def analyze_customer(journey: dict) -> str:
 ### Recent CTI Calls (last 20):
 {calls_str}
 
-### Recent Outages (last 10):
+### Recent Network Outages (last 10):
 {outages_str}
 
-### Recent Activities (last 10):
+### Recent Maintenance/Activities (last 10):
 {activities_str}
 
 ---
 
-Please provide a TAC Level-1 agent with:
-1. **Customer Experience Summary** – A brief narrative of this customer's service history.
-2. **Recurring Issues** – Identify any repeated fault types or patterns.
-3. **Root Cause Hypothesis** – What is most likely causing the poor experience?
-4. **Recommended Action** – What should the agent do/say right now to help this customer?
-5. **Escalation Needed?** – Yes or No, and why.
+Please provide a comprehensive analytical report for a Nayatel TAC agent containing:
+1. **Customer Experience Summary** – A timeline narrative of this customer's service history and frustration level.
+2. **Recurring Issues & Patterns** – Identify repeated fault types, frequent calls without resolution, or correlated outages.
+3. **Root Cause Hypothesis** – Based on the tickets, calls, and outages, what is the underlying technical issue causing their '{category}' status?
+4. **Recommended Action Plan** – Exactly what technical steps should the agent take next, and how should they communicate it to the customer to rebuild trust?
+5. **Escalation Required?** – Yes or No. If Yes, to which department (e.g., OSP, BNG team, NOC) and why.
 """
     return _call_groq(prompt)
 
