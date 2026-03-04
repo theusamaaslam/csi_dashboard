@@ -25,7 +25,7 @@ def _call_groq(prompt: str, model: str = GROQ_MODEL) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=1024,
+            max_tokens=4096,
             temperature=0.4,
         )
         return resp.choices[0].message.content or "No response generated."
