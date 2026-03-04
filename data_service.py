@@ -521,9 +521,10 @@ def get_install_year_breakdown(category: str = "Very Poor",
         in_clause = ", ".join(f"'{x}'" for x in ids)
         with dwh_engine.connect() as conn:
             result = conn.execute(
-                text(f"SELECT EXTRACT(YEAR FROM start_time)::int AS install_year, COUNT(*) AS cnt "
+                text(f"SELECT EXTRACT(YEAR FROM activation_datetime)::int AS install_year, COUNT(*) AS cnt "
                      f"FROM dwh.lifecycle WHERE customer_id IN ({in_clause}) "
-                     f"AND activation_type = 'ACTIVATION' "
+                     f"AND activation_type = 'New Customer' "
+                     f"AND activation_datetime IS NOT NULL "
                      f"GROUP BY 1 ORDER BY 1")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
