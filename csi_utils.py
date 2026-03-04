@@ -21,12 +21,6 @@ class CPTOptimizedCSIConfig:
     """
     
     def __init__(self):
-        # File configuration
-        self.call_data_file = 'data/cti.csv'
-        self.ticket_data_file = 'data/trouble_tickets.csv'
-        self.outage_data_file = 'data/outages.csv'
-        self.activity_data_file = 'data/activity.csv'
-        
         # CPU-optimized processing parameters
         self.processing_batch_size = 5000 
         
@@ -304,29 +298,33 @@ class CSIScorer:
 
 def load_data_optimized(config):
     """
-    Loads data from configured CSV files with memory management.
+    Loads data directly from the AI POSTGRESQL database.
     """
-    print(f"Loading data...")
+    print(f"Loading data directly from AI Database...")
     data_dict = {}
-    files_to_load = [
-        ('calls', config.call_data_file),
-        ('tickets', config.ticket_data_file),
-        ('outages', config.outage_data_file),
-        ('activities', config.activity_data_file)
-    ]
     
-    for data_type, filepath in files_to_load:
-        if not os.path.exists(filepath):
-            print(f"⚠️  File not found: {filepath}")
-            data_dict[data_type] = pd.DataFrame()
-            continue
-        
-        print(f"Loading {data_type} data from '{filepath}'...")
+    # We need to import the ai_engine to fetch data
+    try:
+        from db import ai_engine
+    except ImportError:
+        print("❌ CRITICAL ERROR: Could not import ai_engine from db.py")
+        return data_dict
+
+    queries = {
+        'calls': 'SELECT * FROM ai.cti',
+        'tickets': 'SELECT * FROM ai.trouble_tickets',
+        'outages': 'SELECT * FROM ai.outages',
+        'activities': "SELECT * FROM ai.activity WHERE status IN ('COMPLETED', 'PENDING', 'SUBMITTED')"
+    }
+    
+    for data_type, query in queries.items():
+        print(f"Executing query for {data_type} data...")
         try:
-            data_dict[data_type] = pd.read_csv(filepath)
+            # We use Pandas read_sql to load directly into a dataframe
+            data_dict[data_type] = pd.read_sql(query, con=ai_engine)
             print(f"✓ {data_type.title()} Data: {len(data_dict[data_type]):,} records")
         except Exception as e:
-            print(f"❌ Error loading {filepath}: {e}")
+            print(f"❌ Error loading {data_type} from DB: {e}")
             data_dict[data_type] = pd.DataFrame()
         
         if config.enable_gc:
