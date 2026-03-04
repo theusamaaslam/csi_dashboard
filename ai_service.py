@@ -99,9 +99,6 @@ Based on the Nayatel Telecom CSI data above, please provide a highly detailed, a
 def analyze_customer(journey: dict) -> str:
     """
     Generate a per-customer journey summary for TAC agents.
-
-    Args:
-        journey: dict from data_service.get_customer_journey(userid)
     """
     uid  = journey.get("userid", "Unknown")
     csi  = journey.get("csi", {})
@@ -118,40 +115,42 @@ def analyze_customer(journey: dict) -> str:
         return "\n".join(lines)
 
     tickets_str  = _fmt_list(journey.get("tickets", []),
-                              ["ticket_type", "fault_types", "sub_fault_types", "creation_time"])
+                              ["creation_time", "ticket_type", "fault_types", "sub_fault_types", "location", "duration"])
     calls_str    = _fmt_list(journey.get("calls", []),
-                              ["master_fault_type", "sub_fault_type", "entry_time"])
+                              ["entry_time", "call_detail_log_group", "master_fault_type", "sub_fault_type", "comments", "location", "call_duration"])
     outages_str  = _fmt_list(journey.get("outages", []),
-                              ["event_type", "duration", "occurrence_time"])
+                              ["occurrence_time", "event_type", "description", "location", "duration"])
     activities_str = _fmt_list(journey.get("activities", []),
-                                ["activity_name", "services", "status", "occurrence_time"])
+                                ["occurrence_time", "activity_name", "services", "status", "location", "customer_downtime_hours"])
 
     prompt = f"""
-## Customer Journey Analysis for TAC Level-1 & Level-2
+## Detailed Customer Journey Analysis Request
 
 **Customer ID:** {uid}
 **Predicted CSI Score:** {score}  |  **Current Category:** {category}
 
-### Recent Trouble Tickets (last 20):
+### Recent Trouble Tickets (Last 20):
 {tickets_str}
 
-### Recent CTI Calls (last 20):
+### Recent CTI Calls & Comments (Last 20):
 {calls_str}
 
-### Recent Network Outages (last 10):
+### Recent Network Outages (Last 10):
 {outages_str}
 
-### Recent Maintenance/Activities (last 10):
+### Recent Maintenance/Activities (Last 10):
 {activities_str}
 
 ---
 
-Please provide a comprehensive analytical report for a Nayatel TAC agent containing:
-1. **Customer Experience Summary** – A timeline narrative of this customer's service history and frustration level.
-2. **Recurring Issues & Patterns** – Identify repeated fault types, frequent calls without resolution, or correlated outages.
-3. **Root Cause Hypothesis** – Based on the tickets, calls, and outages, what is the underlying technical issue causing their '{category}' status?
-4. **Recommended Action Plan** – Exactly what technical steps should the agent take next, and how should they communicate it to the customer to rebuild trust?
-5. **Escalation Required?** – Yes or No. If Yes, to which department (e.g., OSP, BNG team, NOC) and why.
+Please act as a Senior Technical Analyst at Nayatel. Analyze this customer's exact history from the past 3 months based *strictly* on the rich data provided above (including specific agent comments, fault types, sub-faults, location outages, etc.).
+
+Provide a highly detailed, comprehensive report formatted using Markdown. It must include:
+
+1. **Why they are in this CSI Category** – Analytically explain what exact sequence of events (e.g., repeated specific faults, excessive downtime, poor resolution on calls) caused their CSI score to reach '{category}'. Reference their actual data.
+2. **Timeline of the Past 3 Months** – Provide a narrative summary of what exactly this customer has experienced recently. Group related tickets/calls/outages to paint a picture of their friction. Explain the technical issues they likely faced.
+3. **Root Cause Analysis** – Dive into the technical fault types and sub-faults. Is there an ongoing localized issue (referencing the location/node)? Is there bad hardware at the premises? Is it a configuration issue?
+4. **Actionable Resolution Plan** – Provide exact, step-by-step instructions on how the agent handling this account should resolve their underlying friction, and specifically what engineering team they should route it to if necessary.
 """
     return _call_groq(prompt)
 

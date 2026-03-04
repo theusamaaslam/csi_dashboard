@@ -193,13 +193,6 @@ def sidebar() -> html.Div:
                     active="exact",
                     className="sidebar-link",
                 ),
-                dbc.NavLink(
-                    [html.I(className="bi bi-robot sidebar-icon"), " AI Insights"],
-                    href="#",
-                    id="nav-ai-btn",
-                    className="sidebar-link",
-                    n_clicks=0,
-                ),
             ],
             vertical=True,
             pills=True,

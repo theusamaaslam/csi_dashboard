@@ -88,14 +88,6 @@ def layout() -> html.Div:
 
         html.Br(),
 
-        # ── AI BUTTON (FAB) ───────────────────────────────────────────────────
-        dbc.Button(
-            [html.I(className="bi bi-stars me-2"), "AI Analysis"],
-            id="btn-open-ai",
-            n_clicks=0,
-            className="ai-fab btn btn-primary",
-        ),
-
     ], className="page-content")
 
 

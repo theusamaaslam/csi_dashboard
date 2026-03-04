@@ -44,16 +44,13 @@ def route(pathname):
 
 
 # ── AI offcanvas toggle (single callback at root level) ───────────────────────
-# NOTE: btn-open-ai (overview FAB) and nav-ai-btn (sidebar) always exist in root.
-# cust-ai-btn only exists when on /customers page — handled via dcc.Store signal.
 @app.callback(
     Output("ai-offcanvas", "is_open"),
-    Input("btn-open-ai",   "n_clicks"),
-    Input("nav-ai-btn",    "n_clicks"),
+    Input("cust-ai-btn",   "n_clicks"),
     State("ai-offcanvas",  "is_open"),
     prevent_initial_call=True,
 )
-def toggle_ai(n1, n2, is_open):
+def toggle_ai(n1, is_open):
     return not is_open
 
 
@@ -61,26 +58,21 @@ def toggle_ai(n1, n2, is_open):
 @app.callback(
     Output("ai-output", "children"),
     Input("btn-generate-ai", "n_clicks"),
-    State("store-selected-category", "data"),
-    State("global-date-range", "start_date"),
-    State("global-date-range", "end_date"),
     State("cust-selected-userid", "data"),
     State("url", "pathname"),
     prevent_initial_call=True,
 )
-def generate_ai(n, category, d1, d2, userid, pathname):
+def generate_ai(n, userid, pathname):
     if not n:
         return ""
-    from ai_service import analyze_segment, analyze_customer
+    from ai_service import analyze_customer
     import data_service as ds
 
     if pathname == "/customers" and userid:
         journey = ds.get_customer_journey(userid)
         text = analyze_customer(journey)
     else:
-        summary = ds.get_csi_summary(d1, d2)
-        filters = {"date_from": d1, "date_to": d2}
-        text = analyze_segment(category or "Very Poor", summary, filters)
+        text = "Please select a customer first to generate analysis."
 
     from dash import dcc
     return dcc.Markdown(text, className="ai-markdown")

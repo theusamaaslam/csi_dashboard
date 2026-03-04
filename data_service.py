@@ -654,7 +654,7 @@ def get_customer_journey(userid: str) -> dict:
         from sqlalchemy import text
         with ai_engine.connect() as conn:
             r = conn.execute(
-                text("SELECT ticket_type, fault_types, sub_fault_types, duration, creation_time "
+                text("SELECT ticket_type, fault_types, sub_fault_types, duration, creation_time, location "
                      "FROM ai.trouble_tickets WHERE userid = :uid ORDER BY creation_time DESC LIMIT 20"),
                 {"uid": uid}
             )
@@ -666,7 +666,7 @@ def get_customer_journey(userid: str) -> dict:
     try:
         with ai_engine.connect() as conn:
             r = conn.execute(
-                text("SELECT call_detail_log_group, master_fault_type, sub_fault_type, call_duration, entry_time "
+                text("SELECT call_detail_log_group, master_fault_type, sub_fault_type, call_duration, entry_time, comments, location "
                      "FROM ai.cti WHERE userid = :uid ORDER BY entry_time DESC LIMIT 20"),
                 {"uid": uid}
             )
@@ -678,7 +678,7 @@ def get_customer_journey(userid: str) -> dict:
     try:
         with ai_engine.connect() as conn:
             r = conn.execute(
-                text("SELECT event_type, duration, occurrence_time "
+                text("SELECT event_type, duration, occurrence_time, description, location "
                      "FROM ai.outages WHERE userid = :uid ORDER BY occurrence_time DESC LIMIT 10"),
                 {"uid": uid}
             )
@@ -690,7 +690,7 @@ def get_customer_journey(userid: str) -> dict:
     try:
         with ai_engine.connect() as conn:
             r = conn.execute(
-                text("SELECT activity_name, services, status, customer_downtime_hours, occurrence_time "
+                text("SELECT activity_name, services, status, customer_downtime_hours, occurrence_time, location "
                      "FROM ai.activity WHERE userid = :uid ORDER BY occurrence_time DESC LIMIT 10"),
                 {"uid": uid}
             )
