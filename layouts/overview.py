@@ -5,7 +5,7 @@ KPI cards + CSI distribution + 7 drill-down charts.
 import plotly.graph_objects as go
 import plotly.express as px
 import dash_bootstrap_components as dbc
-from dash import html, dcc, Input, Output, State, callback, ctx, no_update, ALL
+from dash import html, dcc, Input, Output, State, callback, ctx, no_update, ALL, dash_table
 import pandas as pd
 
 from config import CSI_COLORS, CSI_CATEGORIES
@@ -249,6 +249,7 @@ def register_callbacks(app):
                 elif triggered_idx == "services":
                     if len(svc_drill) == 0: return city_drill, bng_drill, [label]
                     elif len(svc_drill) == 1: return city_drill, bng_drill, [svc_drill[0], label]
+                    elif len(svc_drill) == 2: return city_drill, bng_drill, [svc_drill[0], svc_drill[1], label]
 
         # Prevent circular logic loops by only returning if exactly required
         return no_update, no_update, no_update
@@ -333,23 +334,71 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
         breadcrumb = drill_breadcrumb(["Services"] + svc_drill)
         if len(svc_drill) == 0:
             df = ds.get_service_breakdown(category, d1, d2)
-            chart = _donut(df, "service", "cnt", f"{category} by Service",
-                           colors=["#3b82f6", "#22c55e", "#f59e0b", "#a855f7"])
+            # Add specific colors in order (Network Issue red first, followed by Internet, VAS, Video, VOIP... )
+            # px.colors.qualitative.Set3 fallback handles remainder if order doesn't align exactly
+            service_colors = {
+                "Network Issue": "#dc2626", # Red as per requirements doc
+                "Internet": "#3b82f6",      # Blue
+                "VAS": "#22c55e",           # Green
+                "Video": "#f59e0b",         # Orange
+                "VOIP": "#a855f7",          # Purple
+                "Unknown": "#94a3b8"        # Gray
+            }
+            colors = [service_colors.get(s, "#94a3b8") for s in df["service"].tolist()] if not df.empty else None
+            chart = _donut(df, "service", "cnt", f"{category} by Service", colors=colors)
             chart_id = "services-chart"
         elif len(svc_drill) == 1:
             df = ds.get_fault_types(category, d1, d2, service_filter=svc_drill[0])
             chart = _donut(df, "fault_type", "cnt",
                            f"{category} – {svc_drill[0]} Master Fault Types")
             chart_id = "services-chart"
-        else:
-            df = ds.get_sub_fault_types(category, svc_drill[1], d1, d2)
-            chart = _donut(df, "sub_fault_type", "cnt",
-                           f"{category} – {svc_drill[-1]} Sub Fault Types")
+        elif len(svc_drill) == 2:
+            df = ds.get_sub_fault_types(category, svc_drill[1], d1, d2, service_filter=svc_drill[0])
+            title = f"{category} – {svc_drill[-1]} Sub Fault Types"
+            chart = _donut(df, "sub_fault_type", "cnt", title)
             chart_id = "services-chart"
+        else:
+            # We are at depth 3: Service -> Master Fault -> Sub Fault -> Raw Data Table
+            df = ds.get_fault_details(category, svc_drill[0], svc_drill[1], svc_drill[2], d1, d2)
+            title = f"{category} – Customer Details [{svc_drill[2]}]"
+            
+            if df.empty:
+                chart = html.Div([html.P("No customer records found.", className="text-secondary")], className="text-center p-4")
+            else:
+                chart = dash_table.DataTable(
+                    data=df.to_dict('records'),
+                    columns=[{"name": i, "id": i} for i in df.columns],
+                    page_size=10,
+                    style_table={'overflowX': 'auto', 'minWidth': '100%'},
+                    style_cell={
+                        'backgroundColor': 'rgba(0,0,0,0)',
+                        'color': '#374151',
+                        'textAlign': 'left',
+                        'padding': '12px',
+                        'fontFamily': 'Inter, sans-serif'
+                    },
+                    style_header={
+                        'backgroundColor': '#f8fafc',
+                        'fontWeight': 'bold',
+                        'borderBottom': '1px solid #e2e8f0',
+                        'color': '#1e293b'
+                    },
+                    style_data={
+                        'borderBottom': '1px solid #f1f5f9'
+                    },
+                    style_as_list_view=True,
+                )
+            
+            # Encapsulate the table inside a nicely padded div
+            chart = html.Div([
+                html.H6(title, className="chart-title mb-3"),
+                chart
+            ])
 
-        # Patch the graph id
-        if hasattr(chart, "id"):
+        # Patch the graph id if it's a chart, else just return the div
+        if hasattr(chart, "id") and isinstance(chart, dcc.Graph):
             chart.id = {"type": "drill-chart", "index": "services"}
+            
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: City ─────────────────────────────────────────────────────────────

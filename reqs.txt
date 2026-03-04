@@ -1,0 +1,96 @@
+Customer Service Experience (CSI) Dashboard
+
+Objective:
+The Customer Service Index (CSI) Dashboard currently gathers and analyzes all customer service activities—such as phone calls, support tickets, service outages, and operational work to create a single, clear view of each customer’s service experience. Based on this data, every customer is rated as Excellent, High, Medium, Poor, or Very Poor.
+The goal now is to extend this CSI Dashboard to support Technical Assistance Center (TAC) Level-1 teams and make customer experience information instantly visible where agents need it most.
+Primary Objective
+To show a customer’s overall service experience directly on the main CRM Billing Summary page, so TAC Level-1 agents can immediately understand how the customer has been treated in the past. This quick insight helps agents respond with greater awareness, empathy, and more effective technical query resolution.
+To achieve this:
+A Service Experience Rating tag (e.g., Excellent, High, Medium, Poor and very poor) will be displayed on the CRM Billing Summary page.
+A Customer Experience Journey Bar will visually show the customer’s service history at glance with required solution.
+
+Secondary Objective
+
+To provide easy-to-understand charts, graphs, and filters that give a high-level view of customer service experience across the entire company. This will help teams quickly see trends, identify problem areas, and understand overall customer satisfaction percentage/count.
+Customized Tickets/calls/outages/activities scoring option should be provided like Najoomi Dashboard.
+
+Working:
+
+Color-coded indicator for each CSI category.
+Experience rating tags will be according to the mentioned color coding
+CSI Tag
+Display customer CSI category on the CRM billing page as shown.
+
+Customer Journey Insights
+Auto-generated journey summary based on:
+Repeated calls or tickets for the same Master Fault, including occurrence (year/month/week), solution provided, and current action required for resolution.
+Recent and historical outages number, including occurrence (year/month/week), total downtime experienced for each outage.
+Activities number affecting the customer, including occurrence, total downtime experience.
+      For reference Emergency comments are mention:
+Customer experienced 3 recent outages from December 2025 to January 2026. Total downtime: 1st outage – 6 hours, 2nd outage – 8 hours, 3rd outage – 8 hours.
+Customer has 4 calls and 7 tickets logged under Master Fault – Slow Browsing from September 2025 to January 2026. Solutions provided in each interaction included optimizing the 2.4G band parameters. 
+Action Required: Current ONT model is Huawei HG8245H; recommend offering a dual-band ONT according to loyalty charges.
+The Customer has 5 ONT- red tickets and 6 calls regarding visit timing from June 2025 to December 2025.
+Action Required: Kindly perform link testing and proceed further as per the O&M team’s recommendations.
+        CRM billing page Image:
+
+CSI Dashboard Requirements:
+        Main page of dashboard will give us:
+
+Duration:
+         On the Top there will be duration selection bar to select data/month/year/time
+                      Duration
+After this we will get a pie chart of Graphical view of overall CSI distribution and percentage/count-based display of overall CSI category in line graph form. Both graphs will be in parallel as shown 
+To view very poor customer data, users can:
+Click on the red segment in the donut chart, or
+Click on the red line in the parallel line graph
+Both actions will display the very poor customer data.
+Next 7 Graphs:
+ 
+ Occurrence 
+The system allows selection of a from–To date/month/year/time range on top of graph.
+A bar graph is displayed where:
+Y-axis represents the above selected donut slice selected customer category (excellent/high/medium/poor/very poor) count and percentage
+X-axis represents the selected date/month/year/time
+The bars are shown in descending order of very poor customer scores, not in chronological order.
+Within the selected range, the period with the highest score appears first, followed by lower scores, regardless of date sequence.
+Services 
+ This will be displayed in a pie chart / donut chart format showing the distribution across four services     and will give the percentage/count of above selected very poor customer category percentage/count in each of our four services.
+Internet
+VOIP
+Video
+VAS            
+  Now 4 services and Network Issue will be shown in this form
+                               (As very poor category is selected on top donut slice)
+ When the Internet slice is selected, the system will display the very poor customer percentage/count distribution based on Internet master fault types (e.g., slow browsing, no browsing, frequent disconnection, gaming issues, etc.).
+               The detailed list of Master fault and Sub fault types will be provided in an Excel file.
+Similarly, when any master fault type slice is selected, the system will display multiple slices representing the corresponding sub-fault types, along with the percentage/count ratio of very poor customers for each.
+For example we click on slow browsing it will show very poor customer percentage/count ration in sub fault types like this:
+
+                     
+           The detailed list of Master fault and Sub fault types will be provided in an Excel file.
+City:
+The system will display a city-level pie chart.
+When a city is selected, the system will display a pie chart of all areas within that city, showing the selected customer category percentage/count relative to the total active customer in each city.
+When an area is selected, it will display very poor customer service information for its sub-areas.
+In short: The selected customer service category will show its percentage/count relative to the total active customer in the city, its area, and sub-area levels, and provide a ranking of very poor customers based on the active customer percentages/count in every city/area/sub-area wise.
+Image Reference 
+For example, when Lahore is selected, the system will display a pie chart of all areas within Lahore. When an area is selected, it will display a pie chart of its sub-areas, showing the very poor customer percentage/count relative to the total active customer in that area or sub-area.
+In short: The drill-down shows very poor customer percentages/count at the city → area → sub-area level based on active customer.
+OSP
+Initially, a pie chart of BNGs will be displayed, showing the very poor customer percentage/count relative to the total active customer count on each BNG.
+For reference: 
+Clicking on any specific BNG slice will redirect to a pie chart of OLTs, showing the very poor customer percentage/count relative to the total active customers on each OLT.
+Likewise:
+OLT                     Frame                 Card                   Slot
+The Services, Cities, and BNG/OLT graphs are interlinked. For example, when Internet is selected in the Services pie chart, the Very Poor customer percentage/count in the Cities and BNG/OLT pie charts will update to reflect customers affected by Internet services.
+Similarly, when a specific City and BNG are selected, the Very Poor customer percentage/count will update consistently across all three pie charts.
+Packages
+The system will display the selected customer category count and percentage/count ratio package wise.
+
+Hardware
+System will display the selected customer category percentage/count ratio according to hardware (ONT) installed.
+Installation 
+customer category percentage/count ratio according to installation year.
+“At the end of this page, there will be a preview option that displays customer information in the form of an Excel sheet. We can also apply filters here, similar to how filters are applied in an Excel file, using all the above-mentioned information.”
+On the 2nd page, this CSI module will provide information on all customers, including User ID/NTL number, number of calls and tickets, number of activities and outages, and a CSI category button. Filters for User ID, CSI category, and City-wise occurrence (date/month/year – time) will be available at the top.

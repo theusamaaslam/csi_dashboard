@@ -17,6 +17,37 @@ def _default_dates():
     start = end - timedelta(days=90)
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
+def _map_fault_to_service(fault_name: str) -> str:
+    """Classifies a master fault into one of 5 service buckets: Internet, VOIP, Video, VAS, Network Issue"""
+    if not fault_name or str(fault_name).lower() == 'nan':
+        return "Unknown"
+        
+    f = str(fault_name).upper()
+    
+    # Network Issue keywords
+    network_keywords = ["POWER", "OPTICAL", "LINK", "OLT", "SWITCH", "OUTAGE", "FIBER", "CUT", "SPLICE", "DOWN", "NODE", "GPON"]
+    if any(k in f for k in network_keywords):
+        return "Network Issue"
+        
+    # VOIP keywords
+    voip_keywords = ["VOICE", "VOIP", "CALL", "PHONE", "RING", "DIAL"]
+    if any(k in f for k in voip_keywords):
+        return "VOIP"
+        
+    # Video keywords
+    video_keywords = ["VIDEO", "TV", "CHANNEL", "CABLE", "STB", "BOX", "JOYBOX", "BROADCAST"]
+    if any(k in f for k in video_keywords):
+        return "Video"
+        
+    # VAS keywords
+    vas_keywords = ["VAS", "CLOUD", "VPN", "HOSTEX", "CAMERA", "NWATCH", "DOMAIN", "EMAIL"]
+    if any(k in f for k in vas_keywords):
+        return "VAS"
+        
+    # Default everything else to Internet (Routing, Browsing, Speed, Disconnect, Config etc)
+    return "Internet"
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. KPI SUMMARY
@@ -116,138 +147,77 @@ def get_occurrence_by_period(date_from: str, date_to: str,
 def get_service_breakdown(category: str = "Very Poor",
                            date_from: str = None, date_to: str = None) -> pd.DataFrame:
     """
-    Returns count/% of selected category per service.
-    5 categories: Internet, VOIP, Video, VAS, Network Issue.
-    - Internet/Video/VAS/VOIP sourced from ai.activity (services column) and dwh for VOIP.
-    - Network Issue = CSI users with NO record in ai.activity (no known service).
-    All 5 labels are always present (zero-filled if absent).
+    Returns count/% of selected category per service (Internet, VOIP, Video, VAS, Network Issue).
+    Combines CTI and Tickets data to determine the service issues customers faced.
     """
     if not date_from or not date_to:
         date_from, date_to = _default_dates()
 
-    ALL_SERVICES = ["Internet", "VOIP", "Video", "VAS", "Network Issue"]
+    id_sql = f"""
+        SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
+        WHERE csi_category = :cat
+          AND run_date::date BETWEEN :d1 AND :d2
+    """
+    ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
+    if ids_df.empty:
+        return pd.DataFrame(columns=["service", "cnt"])
+
+    ids = [str(x) for x in ids_df["userid"].tolist()]
+    total_ids = len(ids)
 
     try:
+        from db import ai_engine
         from sqlalchemy import text
-        from db import ai_engine, dwh_engine
-
-        # ── Step 1: get CSI user IDs for the chosen category ───────────────
-        id_sql = f"""
-            SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
-            WHERE csi_category = :cat
-              AND run_date::date BETWEEN :d1 AND :d2
+        in_clause = ", ".join(f"'{x}'" for x in ids)
+        
+        # 1. Get CTI Faults
+        cti_sql = f"""
+            SELECT userid, master_fault_type AS fault_type 
+            FROM ai.cti 
+            WHERE userid IN ({in_clause}) 
+              AND master_fault_type IS NOT NULL AND master_fault_type != 'nan'
         """
-        ids_df = query_df(local_engine, id_sql,
-                          {"cat": category, "d1": date_from, "d2": date_to})
-        if ids_df.empty:
-            empty = pd.DataFrame({"service": ALL_SERVICES, "cnt": [0] * len(ALL_SERVICES)})
-            return empty
-
-        all_ids = set(str(x) for x in ids_df["userid"].tolist())
-        in_clause = ", ".join(f"'{x}'" for x in all_ids)
-
-        # ── Step 2: query ai.activity for service per user ──────────────────
+        # 2. Get Trouble Tickets Faults
+        tt_sql = f"""
+            SELECT userid, fault_types AS fault_type 
+            FROM ai.trouble_tickets 
+            WHERE userid IN ({in_clause}) 
+              AND fault_types IS NOT NULL AND fault_types != 'nan'
+        """
+        
         with ai_engine.connect() as conn:
-            result = conn.execute(
-                text(f"SELECT userid::text AS userid, UPPER(services) AS service "
-                     f"FROM ai.activity WHERE userid IN ({in_clause}) "
-                     f"AND services IS NOT NULL")
-            )
-            act_rows = result.fetchall()
-
-        act_df = pd.DataFrame(act_rows, columns=["userid", "service"]) if act_rows else \
-                 pd.DataFrame(columns=["userid", "service"])
-
-        # ── Step 3: Map raw service strings → canonical 5 categories ───────
-        # Comprehensive map built from actual DB values
-        def _map_service(raw: str) -> str:
-            raw = str(raw).upper().strip()
-            # Multi-value entries — check for dominant token
-            if not raw or raw in ("ALL", "NONE", ""):
-                return "Network Issue"   # multi/unknown → Network Issue
-            tokens = [t.strip() for t in raw.replace(",", "|").split("|")]
-            # Priority order: if any token matches, use that service
-            for token in tokens:
-                if token in ("INTERNET", "PREMIUM-INTERNET", "CVLAS_INTERNET",
-                             "CVAS_INTERNET", "UNLIMITED_BUNDLE"):
-                    return "Internet"
-                if token in ("POTS", "VOIP", "TELEPHONY", "PHONE"):
-                    return "VOIP"
-                if token in ("VIDEO", "BASIC-CABLE-TV", "DIGITAL_SIGNAGE",
-                             "TV", "CABLE"):
-                    return "Video"
-                if token in ("NAYATV", "NAYATEL_TV", "JOYBOX", "EVIEW",
-                             "HOSTEX", "NAYATEL_CLOUD", "NAYATEL CLOUD",
-                             "NWATCH", "NAYATEL_VPN", "WHATSAPP-AUTO-CHATBOT",
-                             "VAS"):
-                    return "VAS"
-            # Contains keyword checks for unrecognised compound values
-            if "INTERNET" in raw or "PREMIUM" in raw:
-                return "Internet"
-            if "VIDEO" in raw or "CABLE" in raw or "TV" in raw:
-                return "Video"
-            if "POTS" in raw or "VOIP" in raw:
-                return "VOIP"
-            # Anything else with no match → Network Issue
-            return "Network Issue"
-
-        if not act_df.empty:
-            act_df["mapped"] = act_df["service"].map(_map_service)
-            # One user can appear multiple times; take the most common service per user
-            user_service = (
-                act_df.groupby(["userid", "mapped"])
-                .size().reset_index(name="n")
-                .sort_values("n", ascending=False)
-                .drop_duplicates(subset="userid", keep="first")[["userid", "mapped"]]
-            )
-            service_counts = user_service["mapped"].value_counts().to_dict()
-            known_ids = set(user_service["userid"].tolist())
-        else:
-            service_counts = {}
-            known_ids = set()
-
-        # ── Step 4: Users with NO activity record → Network Issue ───────────
-        missing_ids = all_ids - known_ids
-
-        # ── Step 5: Try dwh.customers to rescue VOIP users ─────────────────
-        # Some VOIP users won't appear in ai.activity at all.
-        # If we find service-type columns in dwh.customers, use them.
-        voip_extra = 0
-        try:
-            if missing_ids:
-                miss_clause = ", ".join(f"'{x}'" for x in missing_ids)
-                with dwh_engine.connect() as conn:
-                    # Try to find VOIP/POTS customers in dwh.customers
-                    r = conn.execute(
-                        text(
-                            f"SELECT COUNT(DISTINCT customer_id) AS cnt "
-                            f"FROM dwh.customers "
-                            f"WHERE customer_id IN ({miss_clause}) "
-                            f"AND (LOWER(type) LIKE '%voip%' OR LOWER(type) LIKE '%pots%' "
-                            f"     OR LOWER(type) LIKE '%phone%' OR LOWER(type) LIKE '%telephony%')"
-                        )
-                    )
-                    row = r.fetchone()
-                    if row and row[0]:
-                        voip_extra = int(row[0])
-        except Exception as ve:
-            print(f"[data_service] VOIP dwh fallback: {ve}")
-
-        # Assign Network Issue count (minus VOIP rescued from dwh)
-        network_issue_cnt = max(0, len(missing_ids) - voip_extra)
-        if voip_extra > 0:
-            service_counts["VOIP"] = service_counts.get("VOIP", 0) + voip_extra
-        service_counts["Network Issue"] = service_counts.get("Network Issue", 0) + network_issue_cnt
-
-        # ── Step 6: Build final DataFrame with all 5 categories ─────────────
-        rows = [{"service": svc, "cnt": service_counts.get(svc, 0)} for svc in ALL_SERVICES]
-        df = pd.DataFrame(rows).sort_values("cnt", ascending=False)
+            cti_res = conn.execute(text(cti_sql))
+            tt_res = conn.execute(text(tt_sql))
+            cti_rows = cti_res.fetchall()
+            tt_rows = tt_res.fetchall()
+            
+        df_cti = pd.DataFrame(cti_rows, columns=["userid", "fault_type"]) if cti_rows else pd.DataFrame(columns=["userid", "fault_type"])
+        df_tt = pd.DataFrame(tt_rows, columns=["userid", "fault_type"]) if tt_rows else pd.DataFrame(columns=["userid", "fault_type"])
+        
+        # Combine all faults
+        all_faults = pd.concat([df_cti, df_tt], ignore_index=True)
+        
+        if all_faults.empty:
+            return pd.DataFrame([{"service": "Unknown", "cnt": total_ids}])
+            
+        # Map faults to the 5 services
+        all_faults["service"] = all_faults["fault_type"].apply(_map_fault_to_service)
+        
+        # Get primary service for each user (taking the mode or first service they faced)
+        user_grouped = all_faults.groupby("userid")["service"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown").reset_index()
+        
+        df = user_grouped.groupby("service", as_index=False)["userid"].count().rename(columns={"userid": "cnt"}).sort_values("cnt", ascending=False)
+        
+        found_cnt = df["cnt"].sum()
+        missing_cnt = total_ids - found_cnt
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"service": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
         return df
-
     except Exception as e:
         print(f"[data_service] get_service_breakdown error: {e}")
-        empty = pd.DataFrame({"service": ALL_SERVICES, "cnt": [0] * len(ALL_SERVICES)})
-        return empty
+        return pd.DataFrame(columns=["service", "cnt"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,11 +227,7 @@ def get_service_breakdown(category: str = "Very Poor",
 def get_fault_types(category: str = "Very Poor",
                      date_from: str = None, date_to: str = None,
                      service_filter: str = None) -> pd.DataFrame:
-    """
-    Master fault type counts for selected category.
-    When service_filter is provided (e.g. 'Internet'), only CTI records
-    belonging to users of THAT service (via ai.activity) are counted.
-    """
+    """Master fault type counts for selected category, correctly filtered by 5 explicitly mapped Services."""
     if not date_from or not date_to:
         date_from, date_to = _default_dates()
 
@@ -279,69 +245,82 @@ def get_fault_types(category: str = "Very Poor",
     from sqlalchemy import text
     if not ids:
         return pd.DataFrame(columns=["fault_type", "cnt"])
-
+        
+    # We want to know how many actual users we are attributing faults to (for the 'Unknown' logic).
+    # Since this drilldown is theoretically filtered by service, we first find how many users
+    # naturally belong to this service_filter, so we can calculate missing ones.
+    
     in_clause = ", ".join(f"'{x}'" for x in ids)
-
-    # ── Service filter: narrow IDs to only those whose activity service
-    #    matches the selected service (Internet, VOIP, Video, VAS, Network Issue)
-    if service_filter and service_filter.lower() != "all":
-        REVERSE_MAP = {
-            "Internet":       ["INTERNET", "PREMIUM-INTERNET", "CVLAS_INTERNET",
-                               "CVAS_INTERNET", "UNLIMITED_BUNDLE"],
-            "VOIP":           ["POTS", "VOIP", "TELEPHONY", "PHONE"],
-            "Video":          ["VIDEO", "BASIC-CABLE-TV", "DIGITAL_SIGNAGE"],
-            "VAS":            ["NAYATV", "NAYATEL_TV", "JOYBOX", "EVIEW",
-                               "HOSTEX", "NAYATEL_CLOUD", "NAYATEL CLOUD",
-                               "NWATCH", "NAYATEL_VPN", "WHATSAPP-AUTO-CHATBOT"],
-            "Network Issue":  [],   # users with no activity record
-        }
+    
+    cti_sql = f"""
+        SELECT userid, master_fault_type AS fault_type 
+        FROM ai.cti 
+        WHERE userid IN ({in_clause}) 
+          AND master_fault_type IS NOT NULL AND master_fault_type != 'nan'
+    """
+    tt_sql = f"""
+        SELECT userid, fault_types AS fault_type 
+        FROM ai.trouble_tickets 
+        WHERE userid IN ({in_clause}) 
+          AND fault_types IS NOT NULL AND fault_types != 'nan'
+    """
+    
+    try:
         with ai_engine.connect() as conn:
-            if service_filter == "Network Issue":
-                # Network Issue users = those with NO activity record
-                r = conn.execute(
-                    text(f"SELECT DISTINCT userid::text FROM ai.activity "
-                         f"WHERE userid IN ({in_clause})")
-                )
-                act_ids = set(row[0] for row in r.fetchall())
-                filtered = [x for x in ids if x not in act_ids]
-            else:
-                raw_svcs = REVERSE_MAP.get(service_filter, [])
-                if raw_svcs:
-                    svc_clause = ", ".join(f"'{s}'" for s in raw_svcs)
-                    r = conn.execute(
-                        text(f"SELECT DISTINCT userid::text FROM ai.activity "
-                             f"WHERE userid IN ({in_clause}) "
-                             f"AND UPPER(services) IN ({svc_clause})")
-                    )
-                else:
-                    # Generic LIKE fallback for partial matches
-                    r = conn.execute(
-                        text(f"SELECT DISTINCT userid::text FROM ai.activity "
-                             f"WHERE userid IN ({in_clause}) "
-                             f"AND UPPER(services) LIKE '%{service_filter.upper()}%'")
-                    )
-                filtered = [row[0] for row in r.fetchall()]
-
-        if not filtered:
-            return pd.DataFrame(columns=["fault_type", "cnt"])
-        in_clause = ", ".join(f"'{x}'" for x in filtered)
-
-    with ai_engine.connect() as conn:
-        result = conn.execute(
-            text(f"SELECT master_fault_type AS fault_type, COUNT(*) AS cnt "
-                 f"FROM ai.cti WHERE userid IN ({in_clause}) "
-                 f"AND master_fault_type IS NOT NULL AND master_fault_type != 'nan' "
-                 f"GROUP BY 1 ORDER BY cnt DESC LIMIT 20")
-        )
-        rows = result.fetchall()
-        cols = list(result.keys())
-    return pd.DataFrame(rows, columns=cols)
+            cti_res = conn.execute(text(cti_sql))
+            tt_res = conn.execute(text(tt_sql))
+            cti_rows = cti_res.fetchall()
+            tt_rows = tt_res.fetchall()
+            
+        df_cti = pd.DataFrame(cti_rows, columns=["userid", "fault_type"]) if cti_rows else pd.DataFrame(columns=["userid", "fault_type"])
+        df_tt = pd.DataFrame(tt_rows, columns=["userid", "fault_type"]) if tt_rows else pd.DataFrame(columns=["userid", "fault_type"])
+        
+        all_faults = pd.concat([df_cti, df_tt], ignore_index=True)
+        
+        if all_faults.empty:
+             return pd.DataFrame([{"fault_type": "Unknown", "cnt": len(ids)}])
+             
+        # Map master faults to their generic service bucket
+        all_faults["service"] = all_faults["fault_type"].apply(_map_fault_to_service)
+        
+        # Determine the users belonging to the selected service to calculate the correct Unknown gap
+        # Similar logic as get_service_breakdown to align counts perfectly.
+        user_primary_service = all_faults.groupby("userid")["service"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown").reset_index()
+        target_service_users = user_primary_service[user_primary_service["service"] == service_filter]["userid"].tolist()
+        expected_total_for_service = len(target_service_users)
+        
+        if service_filter:
+            # Drop faults not matching the filtered service bucket
+            all_faults = all_faults[all_faults["service"] == service_filter]
+            
+            # Restrict mapping only to users whose primary service is this one 
+            # (to avoid counting secondary faults of users whose primary fault is different)
+            all_faults = all_faults[all_faults["userid"].isin(target_service_users)]
+            
+        # Group by user to just take their top master fault for this category to ensure 1-to-1 customer matching
+        if not all_faults.empty:
+            df_dedup = all_faults.groupby("userid")["fault_type"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown").reset_index()
+            df = df_dedup.groupby("fault_type", as_index=False)["userid"].count().rename(columns={"userid": "cnt"}).sort_values("cnt", ascending=False)
+        else:
+            df = pd.DataFrame(columns=["fault_type", "cnt"])
+            
+        found_cnt = df["cnt"].sum() if not df.empty else 0
+        missing_cnt = expected_total_for_service - found_cnt
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"fault_type": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
+        return df.head(20) # Top 20 for pie chart sanity
+    except Exception as e:
+        print(f"[data_service] get_fault_types error: {e}")
+        return pd.DataFrame(columns=["fault_type", "cnt"])
 
 
 def get_sub_fault_types(category: str = "Very Poor",
                          master_fault: str = None,
-                         date_from: str = None, date_to: str = None) -> pd.DataFrame:
-    """Sub fault type counts for a given master fault."""
+                         date_from: str = None, date_to: str = None,
+                         service_filter: str = None) -> pd.DataFrame:
+    """Sub fault type counts for a given master fault, using both CTI and Tickets."""
     if not date_from or not date_to:
         date_from, date_to = _default_dates()
     if not master_fault:
@@ -361,19 +340,139 @@ def get_sub_fault_types(category: str = "Very Poor",
     from sqlalchemy import text
     if not ids:
         return pd.DataFrame(columns=["sub_fault_type", "cnt"])
+        
     in_clause = ", ".join(f"'{x}'" for x in ids)
-    with ai_engine.connect() as conn:
-        result = conn.execute(
-            text(f"SELECT sub_fault_type, COUNT(*) AS cnt FROM ai.cti "
-                 f"WHERE userid IN ({in_clause}) AND master_fault_type = :mft "
-                 f"AND sub_fault_type IS NOT NULL AND sub_fault_type != 'nan' "
-                 f"GROUP BY 1 ORDER BY cnt DESC LIMIT 20"),
-            {"mft": master_fault}
-        )
-        rows = result.fetchall()
-        cols = list(result.keys())
-    return pd.DataFrame(rows, columns=cols)
+    
+    cti_sql = f"""
+        SELECT userid, sub_fault_type 
+        FROM ai.cti 
+        WHERE userid IN ({in_clause}) 
+          AND master_fault_type = :mft
+          AND sub_fault_type IS NOT NULL AND sub_fault_type != 'nan'
+    """
+    tt_sql = f"""
+        SELECT userid, sub_fault_types AS sub_fault_type 
+        FROM ai.trouble_tickets 
+        WHERE userid IN ({in_clause}) 
+          AND fault_types = :mft
+          AND sub_fault_types IS NOT NULL AND sub_fault_types != 'nan'
+    """
+    
+    # We need to know how many users actually had this master_fault_type as their primary fault
+    # to calculate the exact subset gap for the 'Unknown' bucket.
+    # Because doing the full primary deduction again is expensive, we'll approximate the gap:
+    # Gap = (Users with this master fault) - (Users with this master fault who also have a sub fault)
+    base_sql_cti = f"SELECT userid FROM ai.cti WHERE userid IN ({in_clause}) AND master_fault_type = :mft"
+    base_sql_tt = f"SELECT userid FROM ai.trouble_tickets WHERE userid IN ({in_clause}) AND fault_types = :mft"
+    
+    try:
+        with ai_engine.connect() as conn:
+            cti_res = conn.execute(text(cti_sql), {"mft": master_fault})
+            tt_res = conn.execute(text(tt_sql), {"mft": master_fault})
+            all_sub_faults = pd.concat([
+                pd.DataFrame(cti_res.fetchall(), columns=["userid", "sub_fault_type"]) if cti_res.rowcount else pd.DataFrame(columns=["userid", "sub_fault_type"]),
+                pd.DataFrame(tt_res.fetchall(), columns=["userid", "sub_fault_type"]) if tt_res.rowcount else pd.DataFrame(columns=["userid", "sub_fault_type"])
+            ], ignore_index=True)
+            
+            # Fetch base users for gap calculation
+            b_cti = conn.execute(text(base_sql_cti), {"mft": master_fault})
+            b_tt = conn.execute(text(base_sql_tt), {"mft": master_fault})
+            all_base_users = pd.concat([
+                pd.DataFrame(b_cti.fetchall(), columns=["userid"]) if b_cti.rowcount else pd.DataFrame(columns=["userid"]),
+                pd.DataFrame(b_tt.fetchall(), columns=["userid"]) if b_tt.rowcount else pd.DataFrame(columns=["userid"])
+            ], ignore_index=True)
 
+        expected_total = all_base_users["userid"].nunique() if not all_base_users.empty else 0
+        
+        if all_sub_faults.empty:
+            return pd.DataFrame([{"sub_fault_type": "Unknown", "cnt": expected_total}]) if expected_total > 0 else pd.DataFrame(columns=["sub_fault_type", "cnt"])
+
+        # De-duplicate by user to keep 1-to-1 customer counts
+        df_dedup = all_sub_faults.groupby("userid")["sub_fault_type"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown").reset_index()
+        df = df_dedup.groupby("sub_fault_type", as_index=False)["userid"].count().rename(columns={"userid": "cnt"}).sort_values("cnt", ascending=False)
+        
+        found_cnt = df["cnt"].sum()
+        missing_cnt = expected_total - found_cnt
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"sub_fault_type": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
+        return df.head(20)
+    except Exception as e:
+        print(f"[data_service] get_sub_fault_types error: {e}")
+        return pd.DataFrame(columns=["sub_fault_type", "cnt"])
+
+def get_fault_details(category: str = "Very Poor",
+                      service_filter: str = None,
+                      master_fault: str = None,
+                      sub_fault: str = None,
+                      date_from: str = None, date_to: str = None) -> pd.DataFrame:
+    """Returns the raw row records for users matching the exact 3-layer fault drilldown."""
+    if not date_from or not date_to:
+        date_from, date_to = _default_dates()
+    
+    empty_df = pd.DataFrame(columns=["Customer ID", "Service Group", "Master Fault", "Sub Fault"])
+    
+    # 1. Fetch valid users in this category timeframe
+    id_sql = f"""
+        SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
+        WHERE csi_category = :cat
+          AND run_date::date BETWEEN :d1 AND :d2
+    """
+    ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
+    if ids_df.empty: return empty_df
+    ids = [str(x) for x in ids_df["userid"].tolist()]
+    if not ids: return empty_df
+    
+    # 2. Extract CTI/Ticket faults matching exactly
+    from db import ai_engine
+    from sqlalchemy import text
+    in_clause = ", ".join(f"'{x}'" for x in ids)
+    
+    # Filter conditions
+    mft_cti_cond = f" AND master_fault_type = :mft" if master_fault else ""
+    mft_tt_cond = f" AND fault_types = :mft" if master_fault else ""
+    
+    sft_cti_cond = " AND (sub_fault_type = :sft OR sub_fault_type IS NULL)" if sub_fault == "Unknown" else (f" AND sub_fault_type = :sft" if sub_fault else "")
+    sft_tt_cond = " AND (sub_fault_types = :sft OR sub_fault_types IS NULL)" if sub_fault == "Unknown" else (f" AND sub_fault_types = :sft" if sub_fault else "")
+    
+    cti_sql = f"""
+        SELECT userid, master_fault_type, sub_fault_type
+        FROM ai.cti 
+        WHERE userid IN ({in_clause}){mft_cti_cond}{sft_cti_cond}
+    """
+    tt_sql = f"""
+        SELECT userid, fault_types AS master_fault_type, sub_fault_types AS sub_fault_type
+        FROM ai.trouble_tickets 
+        WHERE userid IN ({in_clause}){mft_tt_cond}{sft_tt_cond}
+    """
+    
+    try:
+        with ai_engine.connect() as conn:
+            params = {}
+            if master_fault: params["mft"] = master_fault
+            if sub_fault and sub_fault != "Unknown": params["sft"] = sub_fault
+            
+            cti_res = conn.execute(text(cti_sql), params)
+            tt_res = conn.execute(text(tt_sql), params)
+            
+            df_cti = pd.DataFrame(cti_res.fetchall(), columns=["Customer ID", "Master Fault", "Sub Fault"]) if cti_res.rowcount else empty_df[["Customer ID", "Master Fault", "Sub Fault"]]
+            df_tt = pd.DataFrame(tt_res.fetchall(), columns=["Customer ID", "Master Fault", "Sub Fault"]) if tt_res.rowcount else empty_df[["Customer ID", "Master Fault", "Sub Fault"]]
+            
+            all_faults = pd.concat([df_cti, df_tt], ignore_index=True)
+            if all_faults.empty: return empty_df
+            
+            # Reconstruct the Service Filter mapping to ensure we don't grab faults belonging to a different service
+            all_faults["Service Group"] = all_faults["Master Fault"].apply(_map_fault_to_service)
+            if service_filter:
+                all_faults = all_faults[all_faults["Service Group"] == service_filter]
+                
+            # De-duplicate by User ID
+            return all_faults.drop_duplicates(subset=["Customer ID"]).reset_index(drop=True)
+            
+    except Exception as e:
+        print(f"[data_service] get_fault_details error: {e}")
+        return empty_df
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. CITY BREAKDOWN (City → Area → Sub-Area)
