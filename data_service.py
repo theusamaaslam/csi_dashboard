@@ -116,86 +116,138 @@ def get_occurrence_by_period(date_from: str, date_to: str,
 def get_service_breakdown(category: str = "Very Poor",
                            date_from: str = None, date_to: str = None) -> pd.DataFrame:
     """
-    Returns count/% of selected category per service (Internet, VOIP, Video, VAS).
-    Joins csi_scores → dwh.customers (via customer_id) to get service type.
+    Returns count/% of selected category per service.
+    5 categories: Internet, VOIP, Video, VAS, Network Issue.
+    - Internet/Video/VAS/VOIP sourced from ai.activity (services column) and dwh for VOIP.
+    - Network Issue = CSI users with NO record in ai.activity (no known service).
+    All 5 labels are always present (zero-filled if absent).
     """
     if not date_from or not date_to:
         date_from, date_to = _default_dates()
 
-    sql = """
-        SELECT
-            UPPER(las.service_type) AS service,
-            COUNT(*) AS cnt
-        FROM dwh.latest_active_services las
-        JOIN dwh.customers c ON c.customer_id = las.customer_id
-        WHERE las.customer_id IN (
-            SELECT userid FROM csi_db.public.csi_scores
-            WHERE csi_category = :cat
-              AND run_date::date BETWEEN :d1 AND :d2
-        )
-        GROUP BY 1
-        ORDER BY cnt DESC
-    """
-    # We query dwh_engine here (cross-db via app-layer join if needed)
-    # Fallback: use ai.activity services column
+    ALL_SERVICES = ["Internet", "VOIP", "Video", "VAS", "Network Issue"]
+
     try:
-        sql2 = """
-            SELECT
-                UPPER(a.services) AS service,
-                COUNT(DISTINCT a.userid) AS cnt
-            FROM ai.activity a
-            WHERE a.userid IN (
-                SELECT userid::text FROM (VALUES {placeholders}) AS t(userid)
-            )
-            GROUP BY 1
-            ORDER BY cnt DESC
-        """
-        # Get userids of selected category from local DB
+        from sqlalchemy import text
+        from db import ai_engine, dwh_engine
+
+        # ── Step 1: get CSI user IDs for the chosen category ───────────────
         id_sql = f"""
             SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
             WHERE csi_category = :cat
               AND run_date::date BETWEEN :d1 AND :d2
         """
-        ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
+        ids_df = query_df(local_engine, id_sql,
+                          {"cat": category, "d1": date_from, "d2": date_to})
         if ids_df.empty:
-            return pd.DataFrame(columns=["service", "cnt"])
+            empty = pd.DataFrame({"service": ALL_SERVICES, "cnt": [0] * len(ALL_SERVICES)})
+            return empty
 
-        ids = tuple(str(x) for x in ids_df["userid"].tolist())
-        # Build service mapping from activity table
-        params = {"cat": category, "d1": date_from, "d2": date_to}
-        act_sql = f"""
-            SELECT UPPER(services) AS service, COUNT(DISTINCT userid) AS cnt
-            FROM ai.activity
-            WHERE userid IN :ids
-            GROUP BY 1
-            ORDER BY cnt DESC
-        """
-        from sqlalchemy import text
-        from db import ai_engine
+        all_ids = set(str(x) for x in ids_df["userid"].tolist())
+        in_clause = ", ".join(f"'{x}'" for x in all_ids)
 
-        in_clause = ", ".join(f"'{x}'" for x in ids)
+        # ── Step 2: query ai.activity for service per user ──────────────────
         with ai_engine.connect() as conn:
             result = conn.execute(
-                text(f"SELECT UPPER(services) AS service, COUNT(DISTINCT userid) AS cnt "
-                     f"FROM ai.activity WHERE userid IN ({in_clause}) GROUP BY 1 ORDER BY cnt DESC")
+                text(f"SELECT userid::text AS userid, UPPER(services) AS service "
+                     f"FROM ai.activity WHERE userid IN ({in_clause}) "
+                     f"AND services IS NOT NULL")
             )
-            rows = result.fetchall()
-            cols = list(result.keys())
-        df = pd.DataFrame(rows, columns=cols)
+            act_rows = result.fetchall()
 
-        # Map to standard 4 services
-        service_map = {
-            "INTERNET": "Internet", "BASIC-CABLE-TV": "Video", "VIDEO": "Video",
-            "POTS": "VOIP", "NAYATV": "VAS", "JOYBOX": "VAS", "EVIEW": "VAS",
-            "HOSTEX": "VAS", "NAYATEL CLOUD": "VAS", "NWATCH": "VAS",
-            "NAYATEL_VPN": "VAS", "ALL": "Internet",
-        }
-        df["service"] = df["service"].map(lambda x: service_map.get(x, "VAS"))
-        df = df.groupby("service", as_index=False)["cnt"].sum().sort_values("cnt", ascending=False)
+        act_df = pd.DataFrame(act_rows, columns=["userid", "service"]) if act_rows else \
+                 pd.DataFrame(columns=["userid", "service"])
+
+        # ── Step 3: Map raw service strings → canonical 5 categories ───────
+        # Comprehensive map built from actual DB values
+        def _map_service(raw: str) -> str:
+            raw = str(raw).upper().strip()
+            # Multi-value entries — check for dominant token
+            if not raw or raw in ("ALL", "NONE", ""):
+                return "Network Issue"   # multi/unknown → Network Issue
+            tokens = [t.strip() for t in raw.replace(",", "|").split("|")]
+            # Priority order: if any token matches, use that service
+            for token in tokens:
+                if token in ("INTERNET", "PREMIUM-INTERNET", "CVLAS_INTERNET",
+                             "CVAS_INTERNET", "UNLIMITED_BUNDLE"):
+                    return "Internet"
+                if token in ("POTS", "VOIP", "TELEPHONY", "PHONE"):
+                    return "VOIP"
+                if token in ("VIDEO", "BASIC-CABLE-TV", "DIGITAL_SIGNAGE",
+                             "TV", "CABLE"):
+                    return "Video"
+                if token in ("NAYATV", "NAYATEL_TV", "JOYBOX", "EVIEW",
+                             "HOSTEX", "NAYATEL_CLOUD", "NAYATEL CLOUD",
+                             "NWATCH", "NAYATEL_VPN", "WHATSAPP-AUTO-CHATBOT",
+                             "VAS"):
+                    return "VAS"
+            # Contains keyword checks for unrecognised compound values
+            if "INTERNET" in raw or "PREMIUM" in raw:
+                return "Internet"
+            if "VIDEO" in raw or "CABLE" in raw or "TV" in raw:
+                return "Video"
+            if "POTS" in raw or "VOIP" in raw:
+                return "VOIP"
+            # Anything else with no match → Network Issue
+            return "Network Issue"
+
+        if not act_df.empty:
+            act_df["mapped"] = act_df["service"].map(_map_service)
+            # One user can appear multiple times; take the most common service per user
+            user_service = (
+                act_df.groupby(["userid", "mapped"])
+                .size().reset_index(name="n")
+                .sort_values("n", ascending=False)
+                .drop_duplicates(subset="userid", keep="first")[["userid", "mapped"]]
+            )
+            service_counts = user_service["mapped"].value_counts().to_dict()
+            known_ids = set(user_service["userid"].tolist())
+        else:
+            service_counts = {}
+            known_ids = set()
+
+        # ── Step 4: Users with NO activity record → Network Issue ───────────
+        missing_ids = all_ids - known_ids
+
+        # ── Step 5: Try dwh.customers to rescue VOIP users ─────────────────
+        # Some VOIP users won't appear in ai.activity at all.
+        # If we find service-type columns in dwh.customers, use them.
+        voip_extra = 0
+        try:
+            if missing_ids:
+                miss_clause = ", ".join(f"'{x}'" for x in missing_ids)
+                with dwh_engine.connect() as conn:
+                    # Try to find VOIP/POTS customers in dwh.customers
+                    r = conn.execute(
+                        text(
+                            f"SELECT COUNT(DISTINCT customer_id) AS cnt "
+                            f"FROM dwh.customers "
+                            f"WHERE customer_id IN ({miss_clause}) "
+                            f"AND (LOWER(type) LIKE '%voip%' OR LOWER(type) LIKE '%pots%' "
+                            f"     OR LOWER(type) LIKE '%phone%' OR LOWER(type) LIKE '%telephony%')"
+                        )
+                    )
+                    row = r.fetchone()
+                    if row and row[0]:
+                        voip_extra = int(row[0])
+        except Exception as ve:
+            print(f"[data_service] VOIP dwh fallback: {ve}")
+
+        # Assign Network Issue count (minus VOIP rescued from dwh)
+        network_issue_cnt = max(0, len(missing_ids) - voip_extra)
+        if voip_extra > 0:
+            service_counts["VOIP"] = service_counts.get("VOIP", 0) + voip_extra
+        service_counts["Network Issue"] = service_counts.get("Network Issue", 0) + network_issue_cnt
+
+        # ── Step 6: Build final DataFrame with all 5 categories ─────────────
+        rows = [{"service": svc, "cnt": service_counts.get(svc, 0)} for svc in ALL_SERVICES]
+        df = pd.DataFrame(rows).sort_values("cnt", ascending=False)
         return df
+
     except Exception as e:
         print(f"[data_service] get_service_breakdown error: {e}")
-        return pd.DataFrame(columns=["service", "cnt"])
+        empty = pd.DataFrame({"service": ALL_SERVICES, "cnt": [0] * len(ALL_SERVICES)})
+        return empty
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -205,7 +257,11 @@ def get_service_breakdown(category: str = "Very Poor",
 def get_fault_types(category: str = "Very Poor",
                      date_from: str = None, date_to: str = None,
                      service_filter: str = None) -> pd.DataFrame:
-    """Master fault type counts for selected category."""
+    """
+    Master fault type counts for selected category.
+    When service_filter is provided (e.g. 'Internet'), only CTI records
+    belonging to users of THAT service (via ai.activity) are counted.
+    """
     if not date_from or not date_to:
         date_from, date_to = _default_dates()
 
@@ -223,7 +279,53 @@ def get_fault_types(category: str = "Very Poor",
     from sqlalchemy import text
     if not ids:
         return pd.DataFrame(columns=["fault_type", "cnt"])
+
     in_clause = ", ".join(f"'{x}'" for x in ids)
+
+    # ── Service filter: narrow IDs to only those whose activity service
+    #    matches the selected service (Internet, VOIP, Video, VAS, Network Issue)
+    if service_filter and service_filter.lower() != "all":
+        REVERSE_MAP = {
+            "Internet":       ["INTERNET", "PREMIUM-INTERNET", "CVLAS_INTERNET",
+                               "CVAS_INTERNET", "UNLIMITED_BUNDLE"],
+            "VOIP":           ["POTS", "VOIP", "TELEPHONY", "PHONE"],
+            "Video":          ["VIDEO", "BASIC-CABLE-TV", "DIGITAL_SIGNAGE"],
+            "VAS":            ["NAYATV", "NAYATEL_TV", "JOYBOX", "EVIEW",
+                               "HOSTEX", "NAYATEL_CLOUD", "NAYATEL CLOUD",
+                               "NWATCH", "NAYATEL_VPN", "WHATSAPP-AUTO-CHATBOT"],
+            "Network Issue":  [],   # users with no activity record
+        }
+        with ai_engine.connect() as conn:
+            if service_filter == "Network Issue":
+                # Network Issue users = those with NO activity record
+                r = conn.execute(
+                    text(f"SELECT DISTINCT userid::text FROM ai.activity "
+                         f"WHERE userid IN ({in_clause})")
+                )
+                act_ids = set(row[0] for row in r.fetchall())
+                filtered = [x for x in ids if x not in act_ids]
+            else:
+                raw_svcs = REVERSE_MAP.get(service_filter, [])
+                if raw_svcs:
+                    svc_clause = ", ".join(f"'{s}'" for s in raw_svcs)
+                    r = conn.execute(
+                        text(f"SELECT DISTINCT userid::text FROM ai.activity "
+                             f"WHERE userid IN ({in_clause}) "
+                             f"AND UPPER(services) IN ({svc_clause})")
+                    )
+                else:
+                    # Generic LIKE fallback for partial matches
+                    r = conn.execute(
+                        text(f"SELECT DISTINCT userid::text FROM ai.activity "
+                             f"WHERE userid IN ({in_clause}) "
+                             f"AND UPPER(services) LIKE '%{service_filter.upper()}%'")
+                    )
+                filtered = [row[0] for row in r.fetchall()]
+
+        if not filtered:
+            return pd.DataFrame(columns=["fault_type", "cnt"])
+        in_clause = ", ".join(f"'{x}'" for x in filtered)
+
     with ai_engine.connect() as conn:
         result = conn.execute(
             text(f"SELECT master_fault_type AS fault_type, COUNT(*) AS cnt "

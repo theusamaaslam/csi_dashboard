@@ -337,7 +337,7 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                            colors=["#3b82f6", "#22c55e", "#f59e0b", "#a855f7"])
             chart_id = "services-chart"
         elif len(svc_drill) == 1:
-            df = ds.get_fault_types(category, d1, d2)
+            df = ds.get_fault_types(category, d1, d2, service_filter=svc_drill[0])
             chart = _donut(df, "fault_type", "cnt",
                            f"{category} – {svc_drill[0]} Master Fault Types")
             chart_id = "services-chart"
