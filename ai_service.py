@@ -148,7 +148,7 @@ Please act as a Senior Technical Analyst at Nayatel. Analyze this customer's exa
 Provide a highly detailed, comprehensive report formatted using Markdown. It must include:
 
 1. **Why they are in this CSI Category** – Analytically explain what exact sequence of events (e.g., repeated specific faults, excessive downtime, poor resolution on calls) caused their CSI score to reach '{category}'. Reference their actual data.
-2. **Timeline of the Past 3 Months** – Provide a narrative summary of what exactly this customer has experienced recently. Group related tickets/calls/outages to paint a picture of their friction. Explain the technical issues they likely faced.
+2. **Detailed Date-wise Timeline (Past 3 Months)** – Provide a meticulous chronological breakdown, date by date, of exactly what this customer has experienced. Do not skip dates where multiple things happened. Detail every ticket, call, and outage chronologically to paint a picture of their friction. Explain the technical issues they likely faced on each day.
 3. **Root Cause Analysis** – Dive into the technical fault types and sub-faults. Is there an ongoing localized issue (referencing the location/node)? Is there bad hardware at the premises? Is it a configuration issue?
 4. **Actionable Resolution Plan** – Provide exact, step-by-step instructions on how the agent handling this account should resolve their underlying friction, and specifically what engineering team they should route it to if necessary.
 """
