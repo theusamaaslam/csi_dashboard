@@ -6,7 +6,7 @@ from config import GROQ_API_KEY, GROQ_MODEL
 
 _client = Groq(api_key=GROQ_API_KEY)
 
-FALLBACK_MODEL = "llama3-70b-8192"
+FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 
 def _call_groq(prompt: str, model: str = GROQ_MODEL) -> str:

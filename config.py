@@ -46,13 +46,7 @@ DWH_DB_URL = (
 
 # ── Groq (LLM) ────────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-# Use a valid Groq model; fall back if configured model is OpenAI format
-_configured_model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
-GROQ_MODEL = (
-    "llama3-70b-8192"
-    if _configured_model.startswith("openai/")
-    else _configured_model
-)
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_HOST  = os.getenv("DASHBOARD_HOST", "0.0.0.0")
