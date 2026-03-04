@@ -437,17 +437,32 @@ def get_package_breakdown(category: str = "Very Poor",
     ids = [str(x) for x in ids_df["userid"].tolist()]
     try:
         from db import ai_engine
-        from sqlalchemy import text
+        import pandas as pd
         if not ids:
             return pd.DataFrame(columns=["package", "cnt"])
+        
+        # Determine the total number of IDs in the category
+        total_ids = len(ids)
+
         in_clause = ", ".join(f"'{x}'" for x in ids)
         with ai_engine.connect() as conn:
+            from sqlalchemy import text
             result = conn.execute(
                 text(f"SELECT planname AS package, COUNT(DISTINCT userid) AS cnt "
                      f"FROM ai.plans WHERE userid IN ({in_clause}) "
-                     f"AND planname IS NOT NULL GROUP BY planname ORDER BY cnt DESC LIMIT 25")
+                     f"AND planname IS NOT NULL GROUP BY planname ORDER BY cnt DESC LIMIT 24")
             )
-            return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            df = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            
+        # Calculate how many IDs are missing from the ai.plans query
+        found_cnt = df['cnt'].sum() if not df.empty else 0
+        missing_cnt = total_ids - found_cnt
+        
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"package": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
+        return df
     except Exception as e:
         print(f"[data_service] get_package_breakdown error: {e}")
         return pd.DataFrame(columns=["package", "cnt"])
@@ -473,18 +488,32 @@ def get_hardware_breakdown(category: str = "Very Poor",
     ids = [str(x) for x in ids_df["userid"].tolist()]
     try:
         from db import dwh_engine
-        from sqlalchemy import text
+        import pandas as pd
         if not ids:
             return pd.DataFrame(columns=["hardware", "cnt"])
+            
+        total_ids = len(ids)
         in_clause = ", ".join(f"'{x}'" for x in ids)
+        
         with dwh_engine.connect() as conn:
+            from sqlalchemy import text
             result = conn.execute(
                 text(f"SELECT hardware_name AS hardware, COUNT(*) AS cnt "
                      f"FROM dwh.customers_equipment WHERE customer_id IN ({in_clause}) "
                      f"AND hardware_category ILIKE '%ONT%' "
-                     f"AND hardware_name IS NOT NULL GROUP BY hardware_name ORDER BY cnt DESC LIMIT 20")
+                     f"AND hardware_name IS NOT NULL GROUP BY hardware_name ORDER BY cnt DESC LIMIT 19")
             )
-            return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            df = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            
+        # Calculate how many IDs are missing from the dwh.customers_equipment query
+        found_cnt = df['cnt'].sum() if not df.empty else 0
+        missing_cnt = total_ids - found_cnt
+        
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"hardware": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
+        return df
     except Exception as e:
         print(f"[data_service] get_hardware_breakdown error: {e}")
         return pd.DataFrame(columns=["hardware", "cnt"])
@@ -510,19 +539,33 @@ def get_install_year_breakdown(category: str = "Very Poor",
     ids = [str(x) for x in ids_df["userid"].tolist()]
     try:
         from db import dwh_engine
-        from sqlalchemy import text
+        import pandas as pd
         if not ids:
             return pd.DataFrame(columns=["install_year", "cnt"])
+            
+        total_ids = len(ids)
         in_clause = ", ".join(f"'{x}'" for x in ids)
+        
         with dwh_engine.connect() as conn:
+            from sqlalchemy import text
             result = conn.execute(
-                text(f"SELECT EXTRACT(YEAR FROM activation_datetime)::int AS install_year, COUNT(*) AS cnt "
+                text(f"SELECT EXTRACT(YEAR FROM activation_datetime)::int AS install_year, COUNT(DISTINCT customer_id) AS cnt "
                      f"FROM dwh.lifecycle WHERE customer_id IN ({in_clause}) "
                      f"AND activation_type = 'New Customer' "
                      f"AND activation_datetime IS NOT NULL "
                      f"GROUP BY 1 ORDER BY 1")
             )
-            return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            df = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+            
+        # Calculate how many IDs are missing from the query
+        found_cnt = df['cnt'].sum() if not df.empty else 0
+        missing_cnt = total_ids - found_cnt
+        
+        if missing_cnt > 0:
+            unknown_df = pd.DataFrame([{"install_year": "Unknown", "cnt": missing_cnt}])
+            df = pd.concat([df, unknown_df], ignore_index=True)
+            
+        return df
     except Exception as e:
         print(f"[data_service] get_install_year_breakdown error: {e}")
         return pd.DataFrame(columns=["install_year", "cnt"])
