@@ -440,16 +440,16 @@ def get_package_breakdown(category: str = "Very Poor",
 
     ids = [str(x) for x in ids_df["userid"].tolist()]
     try:
-        from db import dwh_engine
+        from db import ai_engine
         from sqlalchemy import text
         if not ids:
             return pd.DataFrame(columns=["package", "cnt"])
         in_clause = ", ".join(f"'{x}'" for x in ids)
-        with dwh_engine.connect() as conn:
+        with ai_engine.connect() as conn:
             result = conn.execute(
-                text(f"SELECT plan_name AS package, COUNT(*) AS cnt "
-                     f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
-                     f"AND plan_name IS NOT NULL GROUP BY plan_name ORDER BY cnt DESC LIMIT 25")
+                text(f"SELECT planname AS package, COUNT(DISTINCT userid) AS cnt "
+                     f"FROM ai.plans WHERE userid IN ({in_clause}) "
+                     f"AND planname IS NOT NULL GROUP BY planname ORDER BY cnt DESC LIMIT 25")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
     except Exception as e:
