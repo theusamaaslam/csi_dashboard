@@ -155,7 +155,6 @@ def get_service_breakdown(category: str = "Very Poor",
             SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
             WHERE csi_category = :cat
               AND run_date::date BETWEEN :d1 AND :d2
-            LIMIT 5000
         """
         ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
         if ids_df.empty:
@@ -214,7 +213,6 @@ def get_fault_types(category: str = "Very Poor",
         SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
         WHERE csi_category = :cat
           AND run_date::date BETWEEN :d1 AND :d2
-        LIMIT 5000
     """
     ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
     if ids_df.empty:
@@ -251,7 +249,6 @@ def get_sub_fault_types(category: str = "Very Poor",
         SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
         WHERE csi_category = :cat
           AND run_date::date BETWEEN :d1 AND :d2
-        LIMIT 5000
     """
     ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
     if ids_df.empty:
@@ -432,7 +429,6 @@ def get_package_breakdown(category: str = "Very Poor",
     id_sql = f"""
         SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
         WHERE csi_category = :cat AND run_date::date BETWEEN :d1 AND :d2
-        LIMIT 5000
     """
     ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
     if ids_df.empty:
@@ -469,7 +465,6 @@ def get_hardware_breakdown(category: str = "Very Poor",
     id_sql = f"""
         SELECT DISTINCT userid FROM {LOCAL_DB_TABLE}
         WHERE csi_category = :cat AND run_date::date BETWEEN :d1 AND :d2
-        LIMIT 5000
     """
     ids_df = query_df(local_engine, id_sql, {"cat": category, "d1": date_from, "d2": date_to})
     if ids_df.empty:
