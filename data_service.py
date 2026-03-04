@@ -477,16 +477,17 @@ def get_hardware_breakdown(category: str = "Very Poor",
 
     ids = [str(x) for x in ids_df["userid"].tolist()]
     try:
-        from db import ai_engine
+        from db import dwh_engine
         from sqlalchemy import text
         if not ids:
             return pd.DataFrame(columns=["hardware", "cnt"])
         in_clause = ", ".join(f"'{x}'" for x in ids)
-        with ai_engine.connect() as conn:
+        with dwh_engine.connect() as conn:
             result = conn.execute(
-                text(f"SELECT ontid AS hardware, COUNT(*) AS cnt "
-                     f"FROM ai.alarms WHERE userid IN ({in_clause}) "
-                     f"AND ontid IS NOT NULL GROUP BY ontid ORDER BY cnt DESC LIMIT 20")
+                text(f"SELECT hardware_name AS hardware, COUNT(*) AS cnt "
+                     f"FROM dwh.customers_equipment WHERE customer_id IN ({in_clause}) "
+                     f"AND hardware_category ILIKE '%ONT%' "
+                     f"AND hardware_name IS NOT NULL GROUP BY hardware_name ORDER BY cnt DESC LIMIT 20")
             )
             return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
     except Exception as e:
