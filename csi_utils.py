@@ -656,20 +656,37 @@ def create_features_batched(data_dict, config):
         for i in range(0, len(all_customers), batch_size)
     ]
 
-    print(f"🔄 Parallel processing with {int(os.cpu_count() * 0.8)} workers...")
-
-    # Deep copy data dict to avoid shared memory issues
-    safe_data_dict = {k: v.copy() for k, v in data_dict.items()}
     config_copy = CPTOptimizedCSIConfig()
 
     all_features = []
-    with ProcessPoolExecutor(max_workers=int(os.cpu_count() * 0.8)) as executor:
-        futures = [
-            executor.submit(worker, batch, safe_data_dict, config_copy)
-            for batch in customer_batches
-        ]
-        for future in futures:
+    
+    # Calculate appropriate number of workers
+    num_workers = max(1, int(os.cpu_count() * 0.8))
+    print(f"🔄 Parallel processing with {num_workers} workers...")
+    print(f"Submitting {len(customer_batches)} batches...")
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        for batch in customer_batches:
+            batch_data_dict = {}
+            for data_type, df in data_dict.items():
+                if df.empty:
+                    batch_data_dict[data_type] = df
+                    continue
+                config_dict = get_config_dict(config_copy, data_type)
+                userid_col = config_dict.get('userid')
+                if userid_col and userid_col in df.columns:
+                    # Filter data for this batch to avoid sending entire DB to each worker
+                    batch_data_dict[data_type] = df[df[userid_col].isin(batch)]
+                else:
+                    batch_data_dict[data_type] = df.iloc[:0]
+            
+            futures.append(executor.submit(worker, batch, batch_data_dict, config_copy))
+            
+        for i, future in enumerate(futures):
             all_features.extend(future.result())
+            if (i + 1) % 10 == 0:
+                print(f"  Completed {i + 1}/{len(customer_batches)} batches...")
 
     print("✅ Feature creation completed across all batches.")
     return pd.DataFrame(all_features)
@@ -678,21 +695,26 @@ def process_customer_batch(customer_ids, data_dict, config, csi_scorer):
     """
     Processes a batch of customer IDs to create features.
     """
+    # Pre-group data for the batch to avoid O(N^2) filtering
+    grouped_data = {}
+    for data_type, df in data_dict.items():
+        if not df.empty:
+            config_dict = get_config_dict(config, data_type)
+            userid_col = config_dict.get('userid')
+            if userid_col and userid_col in df.columns:
+                grouped_data[data_type] = df.groupby(userid_col)
+
     batch_features = []
     for customer_id in customer_ids:
         customer_data = {}
-        for data_type, data_df in data_dict.items():
-            if data_df.empty:
-                customer_data[data_type] = pd.DataFrame()
-                continue
-            
-            config_dict = get_config_dict(config, data_type)
-            userid_col = config_dict.get('userid')
-
-            if userid_col and userid_col in data_df.columns:
-                customer_data[data_type] = data_df[data_df[userid_col] == customer_id]
+        for data_type, df in data_dict.items():
+            if data_type in grouped_data:
+                try:
+                    customer_data[data_type] = grouped_data[data_type].get_group(customer_id)
+                except KeyError:
+                    customer_data[data_type] = df.iloc[:0]
             else:
-                customer_data[data_type] = pd.DataFrame()
+                customer_data[data_type] = df.iloc[:0]
         
         customer_features = create_enhanced_customer_features(customer_id, customer_data, config, csi_scorer)
         batch_features.append(customer_features)
