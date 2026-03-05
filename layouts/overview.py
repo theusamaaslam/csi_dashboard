@@ -180,9 +180,12 @@ def register_callbacks(app):
         fig.update_layout(
             xaxis_title=None, yaxis_title="Customers",
             hovermode="x unified",
-            xaxis=dict(type="category"),
+            xaxis_type="category",
             **CHART_LAYOUT,
         )
+        # Ensure CHART_LAYOUT dict destructure doesn't overwrite xaxis_type
+        if "xaxis" in CHART_LAYOUT:
+            fig.layout.xaxis.update(CHART_LAYOUT["xaxis"])
         return fig
 
     # Selected category from donut or category-filter dropdown
@@ -308,8 +311,8 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
     if tab == "tab-occurrence":
         df = ds.get_occurrence_by_period(d1, d2, category)
         if not df.empty:
+            df["period"] = df["period"].astype(str).str[:10]
             df["pct"] = (df["selected_count"] / df["total_count"].replace(0, 1) * 100).round(1)
-            
         fig = go.Figure()
         if not df.empty:
             fig.add_trace(go.Bar(
@@ -321,11 +324,13 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                 hovertemplate="<b>%{x}</b><br>%{y:,} customers<extra></extra>",
             ))
         fig.update_layout(
-            title=f"{category} Customer Occurrence — Last 5 CSI Runs",
+            title=f"{category} Customer Occurrence — highest first",
             xaxis_title=None, yaxis_title="Customers",
-            xaxis=dict(type="category"),
+            xaxis_type="category",
             **CHART_LAYOUT,
         )
+        if "xaxis" in CHART_LAYOUT:
+             fig.layout.xaxis.update(CHART_LAYOUT["xaxis"])
         return dbc.Card(dbc.CardBody([
             dcc.Graph(id={"type": "drill-chart", "index": "occurrence"}, figure=fig,
                       config={"displayModeBar": False}, style={"height": "400px"}),
