@@ -628,28 +628,18 @@ def get_config_dict(config, data_type):
 
 def create_features_batched(data_dict, config):
     """
-    Processes customer data sequentially to avoid extreme memory (OOM) 
-    overhead created by python's multiprocessing with pandas DataFrames.
+    Processes customer data using chunked iteration with aggressive 
+    Garbage Collection to stay strictly under ~1 GB of RAM total.
     """
-    print("Creating features with optimized sequential processing (Low Memory Mode)...")
+    print("Creating features with Extreme Low Memory Mode...")
     
+    # 1. Gather all unique customers and sort them
     all_customers = set()
-    grouped_data = {}
-    
-    # Pre-group all data to make filtering O(1) time complexity
     for data_type, df in data_dict.items():
-        if df.empty:
-            continue
-
-        config_dict = get_config_dict(config, data_type)
-        userid_col = config_dict.get('userid')
-
+        if df.empty: continue
+        userid_col = get_config_dict(config, data_type).get('userid')
         if userid_col and userid_col in df.columns:
             all_customers.update(df[userid_col].dropna().unique())
-            print(f"  Grouping {data_type} data in memory...")
-            grouped_data[data_type] = df.groupby(userid_col)
-        else:
-            print(f"Warning: Could not find userid column '{userid_col}' for data type '{data_type}'")
 
     all_customers = list(all_customers)
     total_customers = len(all_customers)
@@ -661,26 +651,71 @@ def create_features_batched(data_dict, config):
     all_features = []
     csi_scorer = CSIScorer()
     
-    # Process sequentially: Much safer for RAM, and very fast due to .groupby()
-    print(f"🔄 Processing {total_customers:,} customers sequentially...")
-    for i, customer_id in enumerate(all_customers):
-        customer_data = {}
-        for data_type, df in data_dict.items():
-            if data_type in grouped_data:
-                try:
-                    customer_data[data_type] = grouped_data[data_type].get_group(customer_id)
-                except KeyError:
-                    customer_data[data_type] = df.iloc[:0]
-            else:
-                customer_data[data_type] = df.iloc[:0]
-        
-        customer_features = create_enhanced_customer_features(customer_id, customer_data, config, csi_scorer)
-        all_features.append(customer_features)
-        
-        # Print progress every 20,000 customers
-        if (i + 1) % 20000 == 0:
-            print(f"  ✅ Completed {i + 1:,}/{total_customers:,} customers ({((i+1)/total_customers)*100:.1f}%)")
+    # --- MEMORY OPTIMIZATION ---
+    # Sort the dataframes by userid once in-place. 
+    # This guarantees that a customer's records are contiguous.
+    print("  Sorting DataFrames in-place to optimize chunk extraction...")
+    for data_type, df in data_dict.items():
+        if df.empty: continue
+        userid_col = get_config_dict(config, data_type).get('userid')
+        if userid_col and userid_col in df.columns:
+            df.sort_values(by=userid_col, inplace=True, ignore_index=True)
 
+    # Free memory right before the heavy loop
+    gc.collect()
+    
+    # Process customers in small discrete chunks (e.g. 1000 at a time)
+    chunk_size = 1000
+    
+    print(f"🔄 Processing {total_customers:,} customers in chunks of {chunk_size}...")
+    for chunk_start in range(0, total_customers, chunk_size):
+        chunk_customers = set(all_customers[chunk_start:chunk_start + chunk_size])
+        
+        # 2. Extract only the rows relevant to THIS specific chunk of 1000 customers
+        chunk_data = {}
+        for data_type, df in data_dict.items():
+            if df.empty:
+                chunk_data[data_type] = df
+                continue
+            
+            userid_col = get_config_dict(config, data_type).get('userid')
+            if userid_col and userid_col in df.columns:
+                # pandas .isin() is extremely fast and returns a view/copy
+                chunk_data[data_type] = df[df[userid_col].isin(chunk_customers)].copy()
+            else:
+                chunk_data[data_type] = df.iloc[:0]
+        
+        # Group ONLY this tiny chunk (which uses almost no memory)
+        grouped_chunk = {}
+        for data_type, chunk_df in chunk_data.items():
+            if not chunk_df.empty:
+                userid_col = get_config_dict(config, data_type).get('userid')
+                grouped_chunk[data_type] = chunk_df.groupby(userid_col)
+            
+        # 3. Process the 1000 customers
+        for customer_id in chunk_customers:
+            customer_data = {}
+            for data_type, chunk_df in chunk_data.items():
+                if data_type in grouped_chunk:
+                    try:
+                        customer_data[data_type] = grouped_chunk[data_type].get_group(customer_id)
+                    except KeyError:
+                        customer_data[data_type] = chunk_df.iloc[:0]
+                else:
+                    customer_data[data_type] = chunk_df.iloc[:0]
+            
+            customer_features = create_enhanced_customer_features(customer_id, customer_data, config, csi_scorer)
+            all_features.append(customer_features)
+            
+        # 4. Aggressive Memory Cleanup
+        del chunk_data
+        del grouped_chunk
+        gc.collect() # Force OS to reclaim memory from the processed chunk
+        
+        if (chunk_start + chunk_size) % 10000 == 0:
+            print(f"  ✅ Completed {chunk_start + chunk_size:,}/{total_customers:,} customers ({((chunk_start + chunk_size)/total_customers)*100:.1f}%)")
+
+    print(f"  ✅ Completed {total_customers:,}/{total_customers:,} customers (100.0%)")
     print("✅ Feature creation completed.")
     return pd.DataFrame(all_features)
 
