@@ -86,33 +86,57 @@ def get_csi_summary(date_from: str = None, date_to: str = None) -> dict:
         return {"total": 0, "by_category": {}, "avg_score": 0.0}
 
 
+def _get_last_5_tables() -> list:
+    """Finds the last 5 csi_scores table iterations from the database schema."""
+    try:
+        sql = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name LIKE 'csi_scores%'
+            ORDER BY table_name DESC LIMIT 5
+        """
+        df = query_df(local_engine, sql)
+        if not df.empty:
+            tables = df["table_name"].tolist()
+            return sorted(tables) # Return chronological (oldest to newest among the 5)
+        return [LOCAL_DB_TABLE]
+    except Exception as e:
+        print(f"[_get_last_5_tables] error: {e}")
+        return [LOCAL_DB_TABLE]
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. CSI TREND (line / bar)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.DataFrame:
     """
-    Returns counts per CSI category grouped by date/week/month.
-    Returns empty DataFrame on any DB error.
+    Returns counts per CSI category across the last 5 CSI calculation runs (tables).
     """
-    trunc_map = {"day": "day", "week": "week", "month": "month"}
-    trunc = trunc_map.get(granularity, "day")
-    try:
-        sql = f"""
-            SELECT
-                DATE_TRUNC('{trunc}', run_date) AS period,
-                csi_category,
-                COUNT(*) AS cnt
-            FROM {LOCAL_DB_TABLE}
-            WHERE run_date::date BETWEEN :d1 AND :d2
-            GROUP BY 1, 2
-            ORDER BY 1
+    tables = _get_last_5_tables()
+    union_queries = []
+    
+    for tbl in tables:
+        # Extract date from table name or just use the table name as the period marker
+        period_label = tbl.replace("csi_scores_", "") if tbl != "csi_scores" else "Latest"
+        if period_label == "Latest":
+            period_label = datetime.now().strftime("%Y%m%d")
+        
+        q = f"""
+            SELECT '{period_label}' AS period, csi_category, COUNT(*) AS cnt
+            FROM "{tbl}"
+            GROUP BY csi_category
         """
-        return query_df(local_engine, sql, {"d1": date_from, "d2": date_to})
+        union_queries.append(q)
+        
+    if not union_queries:
+        return pd.DataFrame(columns=["period", "csi_category", "cnt"])
+        
+    sql = " UNION ALL ".join(union_queries) + " ORDER BY period ASC"
+    try:
+        return query_df(local_engine, sql)
     except Exception as e:
         print(f"[data_service] get_csi_trend error: {e}")
         return pd.DataFrame(columns=["period", "csi_category", "cnt"])
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. OCCURRENCE DISTRIBUTION (bar, descending by very poor %)
@@ -121,20 +145,31 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
 def get_occurrence_by_period(date_from: str, date_to: str,
                               category: str = "Very Poor",
                               granularity: str = "month") -> pd.DataFrame:
-    trunc_map = {"day": "day", "week": "week", "month": "month"}
-    trunc = trunc_map.get(granularity, "month")
-    try:
-        sql = f"""
-            SELECT
-                DATE_TRUNC('{trunc}', run_date) AS period,
-                COUNT(*) FILTER (WHERE csi_category = :cat) AS selected_count,
-                COUNT(*) AS total_count
-            FROM {LOCAL_DB_TABLE}
-            WHERE run_date::date BETWEEN :d1 AND :d2
-            GROUP BY 1
-            ORDER BY selected_count DESC
+    """
+    Returns occurrence counts for a specific category across the last 5 CSI calculation runs.
+    """
+    tables = _get_last_5_tables()
+    union_queries = []
+    
+    for tbl in tables:
+        period_label = tbl.replace("csi_scores_", "") if tbl != "csi_scores" else "Latest"
+        if period_label == "Latest":
+            period_label = datetime.now().strftime("%Y%m%d")
+            
+        q = f"""
+            SELECT '{period_label}' AS period,
+                   COUNT(*) FILTER (WHERE csi_category = '{category}') AS selected_count,
+                   COUNT(*) AS total_count
+            FROM "{tbl}"
         """
-        return query_df(local_engine, sql, {"d1": date_from, "d2": date_to, "cat": category})
+        union_queries.append(q)
+        
+    if not union_queries:
+         return pd.DataFrame(columns=["period", "selected_count", "total_count"])
+         
+    sql = " UNION ALL ".join(union_queries) + " ORDER BY period ASC"
+    try:
+        return query_df(local_engine, sql)
     except Exception as e:
         print(f"[data_service] get_occurrence_by_period error: {e}")
         return pd.DataFrame(columns=["period", "selected_count", "total_count"])
