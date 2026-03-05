@@ -311,10 +311,10 @@ def load_data_optimized(config):
         return data_dict
 
     queries = {
-        'calls': 'SELECT * FROM ai.cti',
-        'tickets': 'SELECT * FROM ai.trouble_tickets',
-        'outages': 'SELECT * FROM ai.outages',
-        'activities': "SELECT * FROM ai.activity WHERE status IN ('COMPLETED', 'PENDING', 'SUBMITTED')"
+        'calls': 'SELECT userid, entry_time, call_duration, call_detail_log_group, master_fault_type, sub_fault_type FROM ai.cti',
+        'tickets': 'SELECT userid, ticket_type, fault_types, sub_fault_types, duration, creation_time FROM ai.trouble_tickets',
+        'outages': 'SELECT userid, duration, event_type, occurrence_time FROM ai.outages',
+        'activities': "SELECT userid, customer_downtime_hours, occurrence_time, services, status FROM ai.activity WHERE status IN ('COMPLETED', 'PENDING', 'SUBMITTED')"
     }
     
     for data_type, query in queries.items():
