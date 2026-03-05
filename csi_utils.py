@@ -312,7 +312,14 @@ def load_data_optimized(config):
 
     queries = {
         'calls': 'SELECT userid, entry_time, call_duration, call_detail_log_group, master_fault_type, sub_fault_type FROM ai.cti',
-        'tickets': 'SELECT userid, ticket_type, fault_types, sub_fault_types, duration FROM ai.trouble_tickets',
+        'tickets': """SELECT DISTINCT ON (id) userid,
+            tickettype AS ticket_type,
+            faulttype AS fault_types,
+            subfaulttype AS sub_fault_types,
+            EXTRACT(EPOCH FROM (COALESCE(close_time, NOW()) - tt_creation_time))/3600.0 AS duration,
+            tt_creation_time AS creation_time
+            FROM ai.trouble_tickets_complete
+            WHERE tt_creation_time >= NOW() - INTERVAL '1 year'""",
         'outages': 'SELECT userid, duration, event_type, occurrence_time FROM ai.outages',
         'activities': "SELECT userid, customer_downtime_hours, occurrence_time, services, status FROM ai.activity WHERE status IN ('COMPLETED', 'PENDING', 'SUBMITTED')"
     }
