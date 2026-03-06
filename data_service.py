@@ -4,6 +4,7 @@ Each function returns a pandas DataFrame or dict ready for Plotly charts.
 """
 import pandas as pd
 from datetime import datetime, timedelta
+from sqlalchemy import inspect
 from db import query_df, local_engine, ai_engine, dwh_engine
 from config import LOCAL_DB_TABLE, CSI_CATEGORIES
 
@@ -11,6 +12,18 @@ from config import LOCAL_DB_TABLE, CSI_CATEGORIES
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _get_history_tables(limit=5):
+    """Returns the base table + up to `limit` historical rotated tables."""
+    try:
+        inspector = inspect(local_engine)
+        all_tables = inspector.get_table_names()
+        history = [t for t in all_tables if t.startswith(f"{LOCAL_DB_TABLE}_")]
+        history.sort(reverse=True)
+        return [LOCAL_DB_TABLE] + history[:limit]
+    except Exception as e:
+        print(f"Error fetching history tables: {e}")
+        return [LOCAL_DB_TABLE]
 
 def _default_dates():
     end   = datetime.now()
@@ -98,11 +111,16 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
     trunc_map = {"day": "day", "week": "week", "month": "month"}
     trunc = trunc_map.get(granularity, "day")
     try:
+        tables = _get_history_tables(limit=5)
+        union_sq = " UNION ALL ".join([f'SELECT csi_category, run_date FROM "{t}" WHERE run_date::date <= :d2' for t in tables])
+        
         sql = f"""
-            WITH last_runs AS (
+            WITH all_data AS (
+                {union_sq}
+            ),
+            last_runs AS (
                 SELECT DISTINCT run_date::date AS run_d
-                FROM {LOCAL_DB_TABLE}
-                WHERE run_date::date <= :d2
+                FROM all_data
                 ORDER BY run_d DESC
                 LIMIT 5
             )
@@ -110,7 +128,7 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
                 DATE_TRUNC('{trunc}', c.run_date) AS period,
                 c.csi_category,
                 COUNT(*) AS cnt
-            FROM {LOCAL_DB_TABLE} c
+            FROM all_data c
             INNER JOIN last_runs lr ON c.run_date::date = lr.run_d
             GROUP BY 1, 2
             ORDER BY 1
@@ -131,11 +149,16 @@ def get_occurrence_by_period(date_from: str, date_to: str,
     trunc_map = {"day": "day", "week": "week", "month": "month"}
     trunc = trunc_map.get(granularity, "month")
     try:
+        tables = _get_history_tables(limit=5)
+        union_sq = " UNION ALL ".join([f'SELECT csi_category, run_date FROM "{t}" WHERE run_date::date <= :d2' for t in tables])
+        
         sql = f"""
-            WITH last_runs AS (
+            WITH all_data AS (
+                {union_sq}
+            ),
+            last_runs AS (
                 SELECT DISTINCT run_date::date AS run_d
-                FROM {LOCAL_DB_TABLE}
-                WHERE run_date::date <= :d2
+                FROM all_data
                 ORDER BY run_d DESC
                 LIMIT 5
             )
@@ -143,7 +166,7 @@ def get_occurrence_by_period(date_from: str, date_to: str,
                 DATE_TRUNC('{trunc}', c.run_date) AS period,
                 COUNT(*) FILTER (WHERE c.csi_category = :cat) AS selected_count,
                 COUNT(*) AS total_count
-            FROM {LOCAL_DB_TABLE} c
+            FROM all_data c
             INNER JOIN last_runs lr ON c.run_date::date = lr.run_d
             GROUP BY 1
             ORDER BY 1
