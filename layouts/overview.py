@@ -369,7 +369,10 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                     hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
                     customdata=df["pct"]
                 ))
-            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            fig.update_layout(title=title, xaxis_tickangle=-30, xaxis_type="category", **CHART_LAYOUT)
+            # Ensure CHART_LAYOUT destructure doesn't overwrite xaxis_type
+            if "xaxis" in CHART_LAYOUT:
+                fig.layout.xaxis.update(CHART_LAYOUT["xaxis"])
             chart = dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
         elif len(svc_drill) == 2:
             df = ds.get_sub_fault_types(category, svc_drill[1], d1, d2, service_filter=svc_drill[0])
@@ -386,7 +389,10 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                     hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
                     customdata=df["pct"]
                 ))
-            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            fig.update_layout(title=title, xaxis_tickangle=-30, xaxis_type="category", **CHART_LAYOUT)
+            # Ensure CHART_LAYOUT destructure doesn't overwrite xaxis_type
+            if "xaxis" in CHART_LAYOUT:
+                fig.layout.xaxis.update(CHART_LAYOUT["xaxis"])
             chart = dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
         else:
             # We are at depth 3: Service -> Master Fault -> Sub Fault -> Raw Data Table
@@ -457,7 +463,10 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
                     hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
                     customdata=df["pct"]
                 ))
-            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            fig.update_layout(title=title, xaxis_tickangle=-30, xaxis_type="category", **CHART_LAYOUT)
+            # Ensure CHART_LAYOUT destructure doesn't overwrite xaxis_type
+            if "xaxis" in CHART_LAYOUT:
+                fig.layout.xaxis.update(CHART_LAYOUT["xaxis"])
             chart = dcc.Graph(id={"type": "drill-chart", "index": "city"}, figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
             
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
