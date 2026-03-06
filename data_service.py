@@ -118,10 +118,15 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
             WITH all_data AS (
                 {union_sq}
             ),
-            last_runs AS (
-                SELECT DISTINCT run_date::date AS run_d
+            daily_latest AS (
+                -- Find the exact latest timestamp for each calendar day
+                SELECT 
+                    run_date::date as d_date, 
+                    MAX(run_date) as max_run_date
                 FROM all_data
-                ORDER BY run_d DESC
+                WHERE run_date::date <= :d2
+                GROUP BY 1
+                ORDER BY 1 DESC
                 LIMIT 5
             )
             SELECT
@@ -129,7 +134,7 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
                 c.csi_category,
                 COUNT(*) AS cnt
             FROM all_data c
-            INNER JOIN last_runs lr ON c.run_date::date = lr.run_d
+            INNER JOIN daily_latest dl ON c.run_date = dl.max_run_date
             GROUP BY 1, 2
             ORDER BY 1
         """
@@ -156,10 +161,15 @@ def get_occurrence_by_period(date_from: str, date_to: str,
             WITH all_data AS (
                 {union_sq}
             ),
-            last_runs AS (
-                SELECT DISTINCT run_date::date AS run_d
+            daily_latest AS (
+                -- Find the exact latest timestamp for each calendar day
+                SELECT 
+                    run_date::date as d_date, 
+                    MAX(run_date) as max_run_date
                 FROM all_data
-                ORDER BY run_d DESC
+                WHERE run_date::date <= :d2
+                GROUP BY 1
+                ORDER BY 1 DESC
                 LIMIT 5
             )
             SELECT
@@ -167,7 +177,7 @@ def get_occurrence_by_period(date_from: str, date_to: str,
                 COUNT(*) FILTER (WHERE c.csi_category = :cat) AS selected_count,
                 COUNT(*) AS total_count
             FROM all_data c
-            INNER JOIN last_runs lr ON c.run_date::date = lr.run_d
+            INNER JOIN daily_latest dl ON c.run_date = dl.max_run_date
             GROUP BY 1
             ORDER BY 1
         """
