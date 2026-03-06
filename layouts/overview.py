@@ -164,6 +164,7 @@ def register_callbacks(app):
         if df.empty:
             return go.Figure().update_layout(**CHART_LAYOUT)
 
+        df["period"] = df["period"].astype(str).str[:10]
         fig = go.Figure()
         for cat in CSI_CATEGORIES:
             sub = df[df["csi_category"] == cat]
@@ -243,7 +244,9 @@ def register_callbacks(app):
                 click_data = next((c for c in chart_clicks if c is not None), None)
 
             if click_data and "points" in click_data:
-                label = click_data["points"][0]["label"]
+                pt = click_data["points"][0]
+                label = pt.get("label", pt.get("x"))
+                if not label: return no_update, no_update, no_update
                 if triggered_idx == "city":
                     if len(city_drill) == 0: return [label], bng_drill, svc_drill
                     elif len(city_drill) == 1: return [city_drill[0], label], bng_drill, svc_drill
