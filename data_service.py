@@ -108,8 +108,7 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
     Returns counts per CSI category grouped by date/week/month.
     Returns empty DataFrame on any DB error.
     """
-    trunc_map = {"day": "day", "week": "week", "month": "month"}
-    trunc = trunc_map.get(granularity, "day")
+    trunc = "day" # Force daily grouping. 
     try:
         tables = _get_history_tables(limit=5)
         union_sq = " UNION ALL ".join([f'SELECT csi_category, run_date FROM "{t}" WHERE run_date::date <= :d2' for t in tables])
@@ -151,8 +150,7 @@ def get_csi_trend(date_from: str, date_to: str, granularity: str = "day") -> pd.
 def get_occurrence_by_period(date_from: str, date_to: str,
                               category: str = "Very Poor",
                               granularity: str = "month") -> pd.DataFrame:
-    trunc_map = {"day": "day", "week": "week", "month": "month"}
-    trunc = trunc_map.get(granularity, "month")
+    trunc = "day" # Force daily grouping for distinct points instead of monthly rollover
     try:
         tables = _get_history_tables(limit=5)
         union_sq = " UNION ALL ".join([f'SELECT csi_category, run_date FROM "{t}" WHERE run_date::date <= :d2' for t in tables])
