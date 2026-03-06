@@ -36,7 +36,6 @@ def layout() -> html.Div:
         # Stores for drill-down state
         dcc.Store(id="store-selected-category", data="Very Poor"),
         dcc.Store(id="store-city-drill",   data=[]),   # [city, area]
-        dcc.Store(id="store-bng-drill",    data=[]),   # [bng, olt]
         dcc.Store(id="store-service-drill",data=[]),   # [service, master_fault]
 
         # Top date/filter bar
@@ -78,7 +77,6 @@ def layout() -> html.Div:
             dbc.Tab(label="📅 Occurrence", tab_id="tab-occurrence"),
             dbc.Tab(label="🌐 Services",   tab_id="tab-services"),
             dbc.Tab(label="🏙️ City",      tab_id="tab-city"),
-            dbc.Tab(label="📡 OSP / BNG", tab_id="tab-bng"),
             dbc.Tab(label="📦 Packages",  tab_id="tab-packages"),
             dbc.Tab(label="📟 Hardware",  tab_id="tab-hardware"),
             dbc.Tab(label="📅 Install Year", tab_id="tab-install"),
@@ -214,7 +212,6 @@ def register_callbacks(app):
     # Drill-down interaction state machine
     @app.callback(
         Output("store-city-drill",    "data"),
-        Output("store-bng-drill",     "data"),
         Output("store-service-drill", "data"),
         Input({"type": "drill-chart", "index": ALL}, "clickData"),
         Input("drilldown-tabs",        "active_tab"),
@@ -222,11 +219,10 @@ def register_callbacks(app):
         Input("global-date-range", "start_date"),
         Input("global-date-range", "end_date"),
         State("store-city-drill",      "data"),
-        State("store-bng-drill",       "data"),
         State("store-service-drill",   "data"),
         prevent_initial_call=True,
     )
-    def update_drill_stores(chart_clicks, tab, category, d1, d2, city_drill, bng_drill, svc_drill):
+    def update_drill_stores(chart_clicks, tab, category, d1, d2, city_drill, svc_drill):
         triggered = ctx.triggered_id or ""
 
         # Reset states explicitly back to top level of chart hierarchy
@@ -234,7 +230,7 @@ def register_callbacks(app):
             "drilldown-tabs", "store-selected-category",
             "global-date-range.start_date", "global-date-range.end_date"
         ):
-            return [], [], []
+            return [], []
 
         # Handle drill-down clicks inside dynamic charts
         if isinstance(triggered, dict) and triggered.get("type") == "drill-chart":
@@ -246,20 +242,17 @@ def register_callbacks(app):
             if click_data and "points" in click_data:
                 pt = click_data["points"][0]
                 label = pt.get("label", pt.get("x"))
-                if not label: return no_update, no_update, no_update
+                if not label: return no_update, no_update
                 if triggered_idx == "city":
-                    if len(city_drill) == 0: return [label], bng_drill, svc_drill
-                    elif len(city_drill) == 1: return [city_drill[0], label], bng_drill, svc_drill
-                elif triggered_idx == "bng":
-                    if len(bng_drill) == 0: return city_drill, [label], svc_drill
-                    elif len(bng_drill) == 1: return city_drill, [bng_drill[0], label], svc_drill
+                    if len(city_drill) == 0: return [label], svc_drill
+                    elif len(city_drill) == 1: return [city_drill[0], label], svc_drill
                 elif triggered_idx == "services":
-                    if len(svc_drill) == 0: return city_drill, bng_drill, [label]
-                    elif len(svc_drill) == 1: return city_drill, bng_drill, [svc_drill[0], label]
-                    elif len(svc_drill) == 2: return city_drill, bng_drill, [svc_drill[0], svc_drill[1], label]
+                    if len(svc_drill) == 0: return city_drill, [label]
+                    elif len(svc_drill) == 1: return city_drill, [svc_drill[0], label]
+                    elif len(svc_drill) == 2: return city_drill, [svc_drill[0], svc_drill[1], label]
 
         # Prevent circular logic loops by only returning if exactly required
-        return no_update, no_update, no_update
+        return no_update, no_update
 
     # Drill-down UI renderer logic
     @app.callback(
@@ -269,20 +262,19 @@ def register_callbacks(app):
         Input("global-date-range", "start_date"),
         Input("global-date-range", "end_date"),
         Input("store-city-drill",      "data"),
-        Input("store-bng-drill",       "data"),
         Input("store-service-drill",   "data"),
         prevent_initial_call=False,
     )
-    def render_drilldown_panel(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
+    def render_drilldown_panel(tab, category, d1, d2, city_drill, svc_drill):
         # Render panel conditionally based on updated drilldown store contexts
-        return _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill)
+        return _render_drilldown(tab, category, d1, d2, city_drill, svc_drill)
 
     # (AI toggle & generate are handled at root level in app.py)
 
 
 # ── Private render helper ─────────────────────────────────────────────────────
 
-def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
+def _render_drilldown(tab, category, d1, d2, city_drill, svc_drill):
 
     def _bar(df, x_col, y_col, title, color="#7c3aed"):
         if df.empty:
@@ -474,13 +466,6 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
             
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
-    # ── Tab: BNG / OSP ────────────────────────────────────────────────────────
-    elif tab == "tab-bng":
-        breadcrumb = drill_breadcrumb(["All BNGs"] + bng_drill)
-        df = ds.get_bng_breakdown(category, d1, d2)
-        chart = _donut(df, "bng", "selected_cnt", f"{category} by BNG")
-        chart.id = {"type": "drill-chart", "index": "bng"}
-        return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: Packages ─────────────────────────────────────────────────────────
     elif tab == "tab-packages":
