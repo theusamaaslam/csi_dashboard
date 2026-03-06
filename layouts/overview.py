@@ -356,14 +356,38 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
             chart_id = "services-chart"
         elif len(svc_drill) == 1:
             df = ds.get_fault_types(category, d1, d2, service_filter=svc_drill[0])
-            chart = _donut(df, "fault_type", "cnt",
-                           f"{category} – {svc_drill[0]} Master Fault Types")
-            chart_id = "services-chart"
+            title = f"{category} – {svc_drill[0]} Master Fault Types"
+            fig = go.Figure()
+            if not df.empty:
+                total_cnt = df["cnt"].sum()
+                df["pct"] = (df["cnt"] / total_cnt * 100).round(1) if total_cnt > 0 else 0
+                fig.add_trace(go.Bar(
+                    x=df["fault_type"], y=df["cnt"],
+                    marker_color="#3b82f6",
+                    text=[f"{c:,} ({p}%)" for c, p in zip(df["cnt"], df["pct"])],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
+                    customdata=df["pct"]
+                ))
+            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            chart = dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
         elif len(svc_drill) == 2:
             df = ds.get_sub_fault_types(category, svc_drill[1], d1, d2, service_filter=svc_drill[0])
             title = f"{category} – {svc_drill[-1]} Sub Fault Types"
-            chart = _donut(df, "sub_fault_type", "cnt", title)
-            chart_id = "services-chart"
+            fig = go.Figure()
+            if not df.empty:
+                total_cnt = df["cnt"].sum()
+                df["pct"] = (df["cnt"] / total_cnt * 100).round(1) if total_cnt > 0 else 0
+                fig.add_trace(go.Bar(
+                    x=df["sub_fault_type"], y=df["cnt"],
+                    marker_color="#8b5cf6",
+                    text=[f"{c:,} ({p}%)" for c, p in zip(df["cnt"], df["pct"])],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
+                    customdata=df["pct"]
+                ))
+            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            chart = dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
         else:
             # We are at depth 3: Service -> Master Fault -> Sub Fault -> Raw Data Table
             df = ds.get_fault_details(category, svc_drill[0], svc_drill[1], svc_drill[2], d1, d2)
@@ -417,8 +441,25 @@ def _render_drilldown(tab, category, d1, d2, city_drill, bng_drill, svc_drill):
         title = (f"{category} in {area}" if area
                  else f"{category} in {city}" if city
                  else f"{category} by City")
-        chart = _donut(df, "label", "selected_cnt", title)
-        chart.id = {"type": "drill-chart", "index": "city"}
+                 
+        if len(city_drill) == 0:
+            chart = _donut(df, "label", "selected_cnt", title)
+            chart.id = {"type": "drill-chart", "index": "city"}
+        else:
+            fig = go.Figure()
+            if not df.empty:
+                marker_color = "#10b981" if len(city_drill) == 1 else "#0ea5e9"
+                fig.add_trace(go.Bar(
+                    x=df["label"], y=df["selected_cnt"],
+                    marker_color=marker_color,
+                    text=[f"{c:,} ({p}%)" for c, p in zip(df["selected_cnt"], df["pct"])],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>%{y:,} customers (%{customdata}%)<extra></extra>",
+                    customdata=df["pct"]
+                ))
+            fig.update_layout(title=title, xaxis_tickangle=-30, **CHART_LAYOUT)
+            chart = dcc.Graph(id={"type": "drill-chart", "index": "city"}, figure=fig, config={"displayModeBar": False}, style={"height": "380px"})
+            
         return dbc.Card(dbc.CardBody([breadcrumb, html.Br(), chart]))
 
     # ── Tab: BNG / OSP ────────────────────────────────────────────────────────
