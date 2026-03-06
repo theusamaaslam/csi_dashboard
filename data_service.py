@@ -553,7 +553,7 @@ def get_city_breakdown(category: str = "Very Poor",
         in_clause = ", ".join(f"'{x}'" for x in selected_ids)
         
         if city is None:
-            # City level
+            # City level — percentages relative to total selected across all cities
             with dwh_engine.connect() as conn:
                 r_sel = conn.execute(
                     text(f"SELECT city, COUNT(*) AS selected_cnt "
@@ -561,33 +561,29 @@ def get_city_breakdown(category: str = "Very Poor",
                          f"AND city IS NOT NULL GROUP BY city ORDER BY selected_cnt DESC")
                 )
                 sel_df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
-                r_tot = conn.execute(
-                    text("SELECT city, COUNT(*) AS total_cnt FROM dwh.customers "
-                         "WHERE status='ACTIVE' AND city IS NOT NULL GROUP BY city")
-                )
-                tot_df = pd.DataFrame(r_tot.fetchall(), columns=list(r_tot.keys()))
-                
-            df = sel_df.merge(tot_df, on="city", how="left").fillna(0)
-            df = df.rename(columns={"city": "label"})
-            
-            # Check for Unknowns
-            found_cnt = df["selected_cnt"].sum() if not df.empty else 0
-            if found_cnt < expected_total:
-                df = pd.concat([df, pd.DataFrame([{
-                    "label": "Unknown", "selected_cnt": expected_total - found_cnt, 
-                    "total_cnt": expected_total - found_cnt, "pct": 0
+
+            if sel_df.empty:
+                sel_df = pd.DataFrame(columns=["label", "selected_cnt", "pct"])
+            else:
+                sel_df = sel_df.rename(columns={"city": "label"})
+
+            total_selected = sel_df["selected_cnt"].sum()
+            # Unknowns = selected that have no city in dwh
+            if total_selected < expected_total:
+                sel_df = pd.concat([sel_df, pd.DataFrame([{
+                    "label": "Unknown", "selected_cnt": expected_total - total_selected
                 }])], ignore_index=True)
-                
-            df["pct"] = (df["selected_cnt"] / df["total_cnt"].replace(0, 1) * 100).round(1)
+            total_selected = sel_df["selected_cnt"].sum()
+            sel_df["pct"] = (sel_df["selected_cnt"] / total_selected * 100).round(1)
+            df = sel_df
             return df.sort_values("selected_cnt", ascending=False)
 
         elif area is None:
-            # Area level within city
+            # Area level within city — percentages relative to selected in this city
             with dwh_engine.connect() as conn:
-                # Find exactly how many selected users exist in this specific city to calculate a localized 'Unknown' gap
                 r_base = conn.execute(text(f"SELECT COUNT(*) AS c FROM dwh.customers WHERE customer_id IN ({in_clause}) AND city = :city"), {"city": city})
                 local_expected = r_base.scalar() or 0
-                
+
                 r_sel = conn.execute(
                     text(f"SELECT sector AS area, COUNT(*) AS selected_cnt "
                          f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
@@ -596,39 +592,31 @@ def get_city_breakdown(category: str = "Very Poor",
                     {"city": city}
                 )
                 sel_df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
-                r_tot = conn.execute(
-                    text("SELECT sector AS area, COUNT(*) AS total_cnt "
-                         "FROM dwh.customers WHERE status='ACTIVE' AND city = :city "
-                         "AND sector IS NOT NULL GROUP BY sector"),
-                    {"city": city}
-                )
-                tot_df = pd.DataFrame(r_tot.fetchall(), columns=list(r_tot.keys()))
-                
-            df = sel_df.merge(tot_df, on="area", how="left").fillna(0)
-            df = df.rename(columns={"area": "label"})
-            
-            # Check for Unknowns at Area level
-            found_cnt = df["selected_cnt"].sum() if not df.empty else 0
+
+            sel_df = sel_df.rename(columns={"area": "label"})
+
+            # Unknowns
+            found_cnt = sel_df["selected_cnt"].sum() if not sel_df.empty else 0
             if found_cnt < local_expected:
-                df = pd.concat([df, pd.DataFrame([{
-                    "label": "Unknown", "selected_cnt": local_expected - found_cnt, 
-                    "total_cnt": local_expected - found_cnt, "pct": 0
+                sel_df = pd.concat([sel_df, pd.DataFrame([{
+                    "label": "Unknown", "selected_cnt": local_expected - found_cnt
                 }])], ignore_index=True)
-                
-            df["pct"] = (df["selected_cnt"] / df["total_cnt"].replace(0, 1) * 100).round(1)
+
+            total_selected = sel_df["selected_cnt"].sum()
+            sel_df["pct"] = (sel_df["selected_cnt"] / total_selected * 100).round(1) if total_selected > 0 else 0
+            df = sel_df
             return df.sort_values("selected_cnt", ascending=False)
 
         else:
-            # Sub-area level
+            # Sub-area level — percentages relative to selected in this city+area
             try:
                 with dwh_engine.connect() as conn:
-                    # Find exactly how many selected users exist in this specific city+area to calculate a localized 'Unknown' gap
                     r_base = conn.execute(
-                        text(f"SELECT COUNT(*) AS c FROM dwh.customers WHERE customer_id IN ({in_clause}) AND city = :city AND sector = :area"), 
+                        text(f"SELECT COUNT(*) AS c FROM dwh.customers WHERE customer_id IN ({in_clause}) AND city = :city AND sector = :area"),
                         {"city": city, "area": area}
                     )
                     local_expected = r_base.scalar() or 0
-                    
+
                     r_sel = conn.execute(
                         text(f"SELECT subsector AS sublabel, COUNT(*) AS selected_cnt "
                              f"FROM dwh.customers WHERE customer_id IN ({in_clause}) "
@@ -637,26 +625,19 @@ def get_city_breakdown(category: str = "Very Poor",
                         {"city": city, "area": area}
                     )
                     sel_df = pd.DataFrame(r_sel.fetchall(), columns=list(r_sel.keys()))
-                    r_tot = conn.execute(
-                        text("SELECT subsector AS sublabel, COUNT(*) AS total_cnt "
-                             "FROM dwh.customers WHERE status='ACTIVE' AND city = :city "
-                             "AND sector = :area AND subsector IS NOT NULL GROUP BY subsector"),
-                        {"city": city, "area": area}
-                    )
-                    tot_df = pd.DataFrame(r_tot.fetchall(), columns=list(r_tot.keys()))
-                    
-                df = sel_df.merge(tot_df, on="sublabel", how="left").fillna(0)
-                df = df.rename(columns={"sublabel": "label"})
-                
-                # Check for Unknowns at Sub-Area level
-                found_cnt = df["selected_cnt"].sum() if not df.empty else 0
+
+                sel_df = sel_df.rename(columns={"sublabel": "label"})
+
+                # Unknowns
+                found_cnt = sel_df["selected_cnt"].sum() if not sel_df.empty else 0
                 if found_cnt < local_expected:
-                    df = pd.concat([df, pd.DataFrame([{
-                        "label": "Unknown", "selected_cnt": local_expected - found_cnt, 
-                        "total_cnt": local_expected - found_cnt, "pct": 0
+                    sel_df = pd.concat([sel_df, pd.DataFrame([{
+                        "label": "Unknown", "selected_cnt": local_expected - found_cnt
                     }])], ignore_index=True)
-                    
-                df["pct"] = (df["selected_cnt"] / df["total_cnt"].replace(0, 1) * 100).round(1)
+
+                total_selected = sel_df["selected_cnt"].sum()
+                sel_df["pct"] = (sel_df["selected_cnt"] / total_selected * 100).round(1) if total_selected > 0 else 0
+                df = sel_df
                 return df.sort_values("selected_cnt", ascending=False)
                 
             except Exception as e:
